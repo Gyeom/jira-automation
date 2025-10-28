@@ -5,11 +5,31 @@
     <vendor>gyeom</vendor>
 
     <depends>com.intellij.modules.platform</depends>
+    <depends>Git4Idea</depends>
 
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow factoryClass="com.github.gyeom.jiraautomation.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
-        <postStartupActivity implementation="com.github.gyeom.jiraautomation.startup.MyProjectActivity" />
+        <toolWindow factoryClass="com.github.gyeom.jiraautomation.toolWindow.JiraToolWindowFactory"
+                    id="Jira Creator"
+                    anchor="right"
+                    icon="AllIcons.Toolwindows.ToolWindowTodo"/>
+        <projectConfigurable parentId="tools"
+                           instance="com.github.gyeom.jiraautomation.settings.JiraSettingsConfigurable"
+                           id="com.github.gyeom.jiraautomation.settings.JiraSettingsConfigurable"
+                           displayName="Jira Ticket Creator"/>
+        <projectService serviceImplementation="com.github.gyeom.jiraautomation.settings.JiraSettingsState"/>
+        <projectService serviceImplementation="com.github.gyeom.jiraautomation.services.JiraApiService"/>
+        <projectService serviceImplementation="com.github.gyeom.jiraautomation.services.DiffAnalysisService"/>
+        <projectService serviceImplementation="com.github.gyeom.jiraautomation.services.AIService"/>
     </extensions>
+
+    <actions>
+        <action id="com.github.gyeom.jiraautomation.actions.CreateJiraFromDiffAction"
+                class="com.github.gyeom.jiraautomation.actions.CreateJiraFromDiffAction"
+                text="Create Jira Ticket from Changes"
+                description="Create a Jira ticket from code changes">
+            <add-to-group group-id="Vcs.MessageActionGroup" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>
