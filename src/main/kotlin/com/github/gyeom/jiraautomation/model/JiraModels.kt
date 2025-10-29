@@ -50,7 +50,8 @@ data class JiraAssignee(
 )
 
 data class JiraPriority(
-    val name: String
+    val id: String? = null,
+    val name: String? = null
 )
 
 data class JiraIssueResponse(
@@ -82,4 +83,37 @@ enum class OutputLanguage(val displayName: String, val code: String) {
 data class GeneratedTicket(
     val title: String,
     val description: String
+)
+
+// Project list response models
+data class JiraProjectListResponse(
+    val id: String,
+    val key: String,
+    val name: String,
+    val projectTypeKey: String? = null
+)
+
+// Issue type models
+data class JiraIssueTypeResponse(
+    val self: String? = null,
+    val id: String,
+    val name: String,
+    val description: String? = null,
+    val iconUrl: String? = null,
+    val subtask: Boolean = false
+)
+
+// Priority response model
+data class JiraPriorityResponse(
+    val self: String? = null,
+    val id: String,
+    val name: String,
+    val description: String? = null,
+    val iconUrl: String? = null
+)
+
+// AI Provider models
+data class AIProviderInfo(
+    val provider: String,
+    val models: List<String>
 )

@@ -6,7 +6,10 @@ import com.intellij.psi.xml.XmlFile
 import com.intellij.testFramework.TestDataPath
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.util.PsiErrorElementUtil
-import com.github.gyeom.jiraautomation.services.MyProjectService
+import com.github.gyeom.jiraautomation.services.JiraApiService
+import com.github.gyeom.jiraautomation.services.AIService
+import com.github.gyeom.jiraautomation.services.DiffAnalysisService
+import com.github.gyeom.jiraautomation.settings.JiraSettingsState
 
 @TestDataPath("\$CONTENT_ROOT/src/test/testData")
 class MyPluginTest : BasePlatformTestCase() {
@@ -29,10 +32,20 @@ class MyPluginTest : BasePlatformTestCase() {
         myFixture.testRename("foo.xml", "foo_after.xml", "a2")
     }
 
-    fun testProjectService() {
-        val projectService = project.service<MyProjectService>()
+    fun testServices() {
+        // Test that services can be retrieved
+        val jiraApiService = project.service<JiraApiService>()
+        assertNotNull(jiraApiService)
 
-        assertNotSame(projectService.getRandomNumber(), projectService.getRandomNumber())
+        val aiService = project.service<AIService>()
+        assertNotNull(aiService)
+
+        val diffAnalysisService = project.service<DiffAnalysisService>()
+        assertNotNull(diffAnalysisService)
+
+        val settings = JiraSettingsState.getInstance(project)
+        assertNotNull(settings)
+        assertNotNull(settings.state)
     }
 
     override fun getTestDataPath() = "src/test/testData/rename"
