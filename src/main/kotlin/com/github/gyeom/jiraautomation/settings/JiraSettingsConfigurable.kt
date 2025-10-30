@@ -90,16 +90,16 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
             group("Jira Configuration") {
                 row("Jira URL:") {
                     cell(jiraUrlField)
-                        .align(AlignX.FILL)
+                        .columns(30)
                         .comment("Example: https://your-company.atlassian.net")
                 }
                 row("Username/Email:") {
                     cell(jiraUsernameField)
-                        .align(AlignX.FILL)
+                        .columns(30)
                 }
                 row("API Token:") {
                     cell(jiraApiTokenField)
-                        .align(AlignX.FILL)
+                        .columns(30)
                         .comment("Generate from Jira Settings → Security → API tokens")
                 }
 
@@ -112,12 +112,12 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
 
                 row("Default Project:") {
                     cell(projectKeyComboBox)
-                        .align(AlignX.FILL)
+                        .columns(20)
                         .comment("Select or type a project key. Load projects first for dropdown options.")
                 }
                 row("Default Issue Type:") {
                     cell(issueTypeComboBox)
-                        .align(AlignX.FILL)
+                        .columns(20)
                         .comment("Select issue type. Will update based on selected project.")
                 }
             }
@@ -125,17 +125,17 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
             group("AI Configuration") {
                 row("AI Provider:") {
                     cell(aiProviderComboBox)
-                        .align(AlignX.FILL)
+                        .columns(15)
                         .comment("Select AI provider")
                 }
                 row("API Key:") {
                     cell(aiApiKeyField)
-                        .align(AlignX.FILL)
+                        .columns(30)
                         .comment("Enter your AI provider API key")
                 }
                 row("Model:") {
                     cell(aiModelComboBox)
-                        .align(AlignX.FILL)
+                        .columns(25)
                         .comment("Select AI model")
                 }
             }
@@ -143,7 +143,7 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
             group("Language Settings") {
                 row("Default Language:") {
                     cell(languageComboBox)
-                        .align(AlignX.FILL)
+                        .columns(15)
                         .comment("Select default output language")
                 }
                 row {
