@@ -4,6 +4,7 @@ import com.github.gyeom.jiraautomation.model.*
 import com.github.gyeom.jiraautomation.services.AIService
 import com.github.gyeom.jiraautomation.services.DiffAnalysisService
 import com.github.gyeom.jiraautomation.services.JiraApiService
+import com.github.gyeom.jiraautomation.services.TicketHistoryService
 import com.github.gyeom.jiraautomation.settings.JiraSettingsState
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
@@ -35,6 +36,7 @@ class CreateJiraTicketDialog(
     private val aiService = project.service<AIService>()
     private val jiraApiService = project.service<JiraApiService>()
     private val diffAnalysisService = project.service<DiffAnalysisService>()
+    private val historyService = project.service<TicketHistoryService>()
 
     private val languageComboBox = ComboBox(OutputLanguage.values())
     private val titleField = JBTextField(60)
@@ -124,19 +126,20 @@ class CreateJiraTicketDialog(
         val defaultLang = OutputLanguage.fromCode(settings.state.defaultLanguage)
         languageComboBox.selectedItem = defaultLang
 
-        // Set default AI provider and model
-        aiProviderComboBox.selectedItem = settings.state.aiProvider
+        // Set AI provider and model to last used values
+        val lastProvider = settings.state.lastUsedAiProvider.takeIf { it.isNotEmpty() } ?: settings.state.aiProvider
+        aiProviderComboBox.selectedItem = lastProvider
         updateAIModels()
-        aiModelComboBox.selectedItem = settings.state.aiModel
+        val lastModel = settings.state.lastUsedAiModel.takeIf { it.isNotEmpty() } ?: settings.state.aiModel
+        aiModelComboBox.selectedItem = lastModel
 
         // Setup listeners
         projectKeyComboBox.addActionListener { loadIssueTypesForProject() }
         aiProviderComboBox.addActionListener { updateAIModels() }
 
-        // Load Jira metadata
+        // Load current user first, then load other metadata
         SwingUtilities.invokeLater {
-            loadJiraMetadata()
-            loadCurrentUser()
+            loadCurrentUserThenMetadata()
             generateTicket()
         }
     }
@@ -411,7 +414,9 @@ class CreateJiraTicketDialog(
         gbc.gridx = 1
         gbc.weightx = 1.0
         startDatePicker.toolTipText = "Select or enter date (YYYY-MM-DD)"
-        startDatePicker.text = ""
+        // Set start date to today
+        val today = java.time.LocalDate.now()
+        startDatePicker.text = today.toString()
         val startCalendarButton = JButton("\uD83D\uDCC5")
         startCalendarButton.toolTipText = "Pick a date"
         startCalendarButton.addActionListener {
@@ -432,7 +437,9 @@ class CreateJiraTicketDialog(
         gbc.gridx = 1
         gbc.weightx = 1.0
         dueDatePicker.toolTipText = "Select or enter date (YYYY-MM-DD)"
-        dueDatePicker.text = ""
+        // Set due date to today + 7 days
+        val dueDate = java.time.LocalDate.now().plusDays(7)
+        dueDatePicker.text = dueDate.toString()
         val dueCalendarButton = JButton("\uD83D\uDCC5")
         dueCalendarButton.toolTipText = "Pick a date"
         dueCalendarButton.addActionListener {
@@ -469,11 +476,12 @@ class CreateJiraTicketDialog(
                         }
                         projectItems.forEach { projectKeyComboBox.addItem(it) }
 
-                        // Select default project if exists
-                        val defaultKey = settings.state.defaultProjectKey
-                        val defaultProject = projectItems.find { it.key == defaultKey }
-                        if (defaultProject != null) {
-                            projectKeyComboBox.selectedItem = defaultProject
+                        // Select last used project if exists, otherwise use default
+                        val lastKey = settings.state.lastUsedProjectKey.takeIf { it.isNotEmpty() }
+                            ?: settings.state.defaultProjectKey
+                        val projectToSelect = projectItems.find { it.key == lastKey }
+                        if (projectToSelect != null) {
+                            projectKeyComboBox.selectedItem = projectToSelect
                         }
 
                         // Load issue types for selected project
@@ -481,10 +489,12 @@ class CreateJiraTicketDialog(
                     }
                 }.onFailure { error ->
                     SwingUtilities.invokeLater {
-                        // Fall back to manual entry with default value
+                        // Fall back to manual entry with last used or default value
+                        val fallbackKey = settings.state.lastUsedProjectKey.takeIf { it.isNotEmpty() }
+                            ?: settings.state.defaultProjectKey
                         projectKeyComboBox.removeAllItems()
                         projectKeyComboBox.addItem(
-                            ProjectItem(settings.state.defaultProjectKey, "Manual Entry")
+                            ProjectItem(fallbackKey, "Manual Entry")
                         )
                         println("Failed to load projects: ${error.message}")
                     }
@@ -522,7 +532,18 @@ class CreateJiraTicketDialog(
                     components.forEach { comp ->
                         componentsComboBox.addItem(comp)
                     }
-                    componentsComboBox.selectedIndex = 0
+                    // Select last used component if exists
+                    val lastComponentId = settings.state.lastUsedComponentId
+                    if (lastComponentId.isNotEmpty()) {
+                        val lastComponent = components.find { it.id == lastComponentId }
+                        if (lastComponent != null) {
+                            componentsComboBox.selectedItem = lastComponent
+                        } else {
+                            componentsComboBox.selectedIndex = 0
+                        }
+                    } else {
+                        componentsComboBox.selectedIndex = 0
+                    }
                 }
             }.onFailure { error ->
                 println("ERROR: Failed to load components: ${error.message}")
@@ -544,7 +565,13 @@ class CreateJiraTicketDialog(
                     labels.forEach { label ->
                         labelsComboBox.addItem(label)
                     }
-                    labelsComboBox.selectedIndex = 0
+                    // Select last used label if exists
+                    val lastLabel = settings.state.lastUsedLabel
+                    if (lastLabel.isNotEmpty() && labels.contains(lastLabel)) {
+                        labelsComboBox.selectedItem = lastLabel
+                    } else {
+                        labelsComboBox.selectedIndex = 0
+                    }
                     println("Loaded ${labels.size} labels for project ${selectedProject.key}")
                 }
             }.onFailure { error ->
@@ -567,11 +594,12 @@ class CreateJiraTicketDialog(
                         issueTypeComboBox.addItem(IssueTypeItem(issueType.id, issueType.name))
                     }
 
-                    // Select default issue type if exists
-                    val defaultType = settings.state.defaultIssueType
+                    // Select last used issue type if exists, otherwise use default
+                    val lastType = settings.state.lastUsedIssueType.takeIf { it.isNotEmpty() }
+                        ?: settings.state.defaultIssueType
                     for (i in 0 until issueTypeComboBox.itemCount) {
                         val item = issueTypeComboBox.getItemAt(i)
-                        if (item.name == defaultType) {
+                        if (item.name == lastType) {
                             issueTypeComboBox.selectedIndex = i
                             break
                         }
@@ -596,6 +624,17 @@ class CreateJiraTicketDialog(
                     priorityComboBox.addItem(PriorityItem("", "(No Priority)"))
                     priorities.forEach { priority ->
                         priorityComboBox.addItem(PriorityItem(priority.id, priority.name))
+                    }
+                    // Select last used priority if exists
+                    val lastPriorityId = settings.state.lastUsedPriorityId
+                    if (lastPriorityId.isNotEmpty()) {
+                        for (i in 0 until priorityComboBox.itemCount) {
+                            val item = priorityComboBox.getItemAt(i)
+                            if (item.id == lastPriorityId) {
+                                priorityComboBox.selectedIndex = i
+                                break
+                            }
+                        }
                     }
                 }
             }.onFailure { error ->
@@ -784,6 +823,28 @@ class CreateJiraTicketDialog(
 
         result.onSuccess { issue ->
             val jiraUrl = "${settings.state.jiraUrl}/browse/${issue.key}"
+
+            // Save to history
+            historyService.addTicket(
+                TicketHistory(
+                    key = issue.key,
+                    title = title,
+                    url = jiraUrl,
+                    projectKey = projectKey,
+                    issueType = issueType
+                )
+            )
+
+            // Save last used values for next time
+            settings.state.lastUsedAiProvider = aiProviderComboBox.selectedItem as? String ?: ""
+            settings.state.lastUsedAiModel = aiModelComboBox.selectedItem as? String ?: ""
+            settings.state.lastUsedProjectKey = projectKey
+            settings.state.lastUsedIssueType = issueType
+            settings.state.lastUsedPriorityId = priority ?: ""
+            settings.state.lastUsedEpicKey = epic?.key ?: ""
+            settings.state.lastUsedLabel = selectedLabel ?: ""
+            settings.state.lastUsedComponentId = selectedComponent?.id ?: ""
+
             Messages.showInfoMessage(
                 project,
                 "Jira ticket created successfully!\n\nKey: ${issue.key}\nURL: $jiraUrl",
@@ -871,15 +932,70 @@ class CreateJiraTicketDialog(
         }
     }
 
+    private fun loadCurrentUserThenMetadata() {
+        Thread {
+            val result = jiraApiService.getCurrentUser()
+            result.onSuccess { user ->
+                SwingUtilities.invokeLater {
+                    currentUser = user.toJiraUser()
+                    println("Current user loaded: ${currentUser?.displayName}")
+
+                    // Add current user to combo boxes immediately
+                    assigneeComboBox.addItem(currentUser)
+                    assigneeComboBox.selectedItem = currentUser
+                    reporterComboBox.addItem(currentUser)
+                    reporterComboBox.selectedItem = currentUser
+
+                    // Now load metadata which will call loadAssignableUsers
+                    loadJiraMetadata()
+                }
+            }.onFailure { error ->
+                println("Failed to load current user: ${error.message}")
+                // Still load metadata even if current user fails
+                SwingUtilities.invokeLater {
+                    loadJiraMetadata()
+                }
+            }
+        }.start()
+    }
+
     private fun loadCurrentUser() {
         Thread {
             val result = jiraApiService.getCurrentUser()
             result.onSuccess { user ->
                 SwingUtilities.invokeLater {
                     currentUser = user.toJiraUser()
-                    // Set current user as default reporter
-                    reporterComboBox.addItem(currentUser)
-                    reporterComboBox.selectedItem = currentUser
+
+                    // Find if current user is already in the combo boxes
+                    var assigneeHasCurrentUser = false
+                    for (i in 0 until assigneeComboBox.itemCount) {
+                        val item = assigneeComboBox.getItemAt(i)
+                        if (item?.accountId == currentUser?.accountId) {
+                            assigneeComboBox.selectedIndex = i
+                            assigneeHasCurrentUser = true
+                            break
+                        }
+                    }
+
+                    var reporterHasCurrentUser = false
+                    for (i in 0 until reporterComboBox.itemCount) {
+                        val item = reporterComboBox.getItemAt(i)
+                        if (item?.accountId == currentUser?.accountId) {
+                            reporterComboBox.selectedIndex = i
+                            reporterHasCurrentUser = true
+                            break
+                        }
+                    }
+
+                    // If not in combo boxes yet, add and select
+                    if (!assigneeHasCurrentUser) {
+                        assigneeComboBox.insertItemAt(currentUser, 0)
+                        assigneeComboBox.selectedIndex = 0
+                    }
+                    if (!reporterHasCurrentUser) {
+                        reporterComboBox.insertItemAt(currentUser, 0)
+                        reporterComboBox.selectedIndex = 0
+                    }
                 }
             }
         }.start()
@@ -985,19 +1101,32 @@ class CreateJiraTicketDialog(
             val result = jiraApiService.getAssignableUsers(selectedProject.key)
             result.onSuccess { users ->
                 SwingUtilities.invokeLater {
+                    println("loadAssignableUsers called, currentUser: ${currentUser?.displayName}")
+
                     // Don't load all users - too many for large organizations
                     // Only show current user and a few common ones
                     assigneeComboBox.removeAllItems()
                     reporterComboBox.removeAllItems()
 
                     // Add current user first if available
-                    currentUser?.let { current ->
-                        val matchingUser = users.find { it.accountId == current.accountId }
+                    if (currentUser != null) {
+                        val matchingUser = users.find { it.accountId == currentUser?.accountId }
                         if (matchingUser != null) {
+                            println("Adding current user as first item: ${matchingUser.displayName}")
                             assigneeComboBox.addItem(matchingUser)
                             reporterComboBox.addItem(matchingUser)
-                            reporterComboBox.selectedItem = matchingUser
+                            // Select current user as default
+                            assigneeComboBox.selectedIndex = 0
+                            reporterComboBox.selectedIndex = 0
+                        } else {
+                            println("Current user not found in assignable users, adding directly")
+                            assigneeComboBox.addItem(currentUser)
+                            reporterComboBox.addItem(currentUser)
+                            assigneeComboBox.selectedIndex = 0
+                            reporterComboBox.selectedIndex = 0
                         }
+                    } else {
+                        println("WARNING: currentUser is null in loadAssignableUsers!")
                     }
 
                     // Add a few recent/common users (first 5 that aren't current user)
@@ -1007,6 +1136,8 @@ class CreateJiraTicketDialog(
                             assigneeComboBox.addItem(user)
                             reporterComboBox.addItem(user)
                         }
+
+                    println("Final assignee selection: ${assigneeComboBox.selectedItem?.let { (it as JiraUser).displayName }}")
                 }
             }
         }.start()
@@ -1045,7 +1176,18 @@ class CreateJiraTicketDialog(
                     epics.forEach { epic ->
                         epicComboBox.addItem(epic)
                     }
-                    epicComboBox.selectedIndex = 0  // Select "(No Epic)" by default
+                    // Select last used epic if exists
+                    val lastEpicKey = settings.state.lastUsedEpicKey
+                    if (lastEpicKey.isNotEmpty()) {
+                        val lastEpic = epics.find { it.key == lastEpicKey }
+                        if (lastEpic != null) {
+                            epicComboBox.selectedItem = lastEpic
+                        } else {
+                            epicComboBox.selectedIndex = 0
+                        }
+                    } else {
+                        epicComboBox.selectedIndex = 0  // Select "(No Epic)" by default
+                    }
                 }
             }.onFailure { error ->
                 SwingUtilities.invokeLater {

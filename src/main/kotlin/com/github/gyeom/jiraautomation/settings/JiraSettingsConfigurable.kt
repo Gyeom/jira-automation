@@ -23,10 +23,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
     private val jiraUsernameField = JBTextField()
     private val jiraApiTokenField = JBPasswordField()
 
-    // Project and Issue Type - using editable ComboBoxes
-    private val projectKeyComboBox = ComboBox<ProjectItem>()
-    private val issueTypeComboBox = ComboBox<IssueTypeItem>()
-
     // AI Configuration - using ComboBoxes
     private val aiProviderComboBox = ComboBox(arrayOf("openai", "anthropic"))
     private val aiApiKeyField = JBPasswordField()
@@ -41,46 +37,59 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
     private var includeDiffInDescription = true
     private var linkToCommit = true
 
-    // Loading state
-    private var isLoadingMetadata = false
-
-    // Data classes
-    data class ProjectItem(val key: String, val name: String) {
-        override fun toString() = "$key - ${name}"
-    }
-
-    data class IssueTypeItem(val id: String, val name: String) {
-        override fun toString() = name
-    }
-
     init {
-        // Make project key combo editable for manual entry
-        projectKeyComboBox.isEditable = true
-
         // Setup listeners
         aiProviderComboBox.addActionListener { updateAIModels() }
-        projectKeyComboBox.addActionListener { loadIssueTypesForProject() }
-
-        // Add listeners for Jira credentials to enable Load button
-        jiraUrlField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
-            override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = checkCredentials()
-            override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = checkCredentials()
-            override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = checkCredentials()
-        })
-        jiraUsernameField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
-            override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = checkCredentials()
-            override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = checkCredentials()
-            override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = checkCredentials()
-        })
-        jiraApiTokenField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
-            override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = checkCredentials()
-            override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = checkCredentials()
-            override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = checkCredentials()
-        })
     }
 
-    private fun checkCredentials() {
-        // This method can be used to enable/disable the Load Projects button
+    private fun testJiraConnection() {
+        // Save current Jira credentials temporarily
+        val tempUrl = jiraUrlField.text
+        val tempUsername = jiraUsernameField.text
+        val tempToken = String(jiraApiTokenField.password)
+
+        if (tempUrl.isEmpty() || tempUsername.isEmpty() || tempToken.isEmpty()) {
+            com.intellij.openapi.ui.Messages.showWarningDialog(
+                project,
+                "Please fill in all Jira credentials before testing connection.",
+                "Missing Credentials"
+            )
+            return
+        }
+
+        // Temporarily apply settings for API call
+        val originalUrl = settings.state.jiraUrl
+        val originalUsername = settings.state.jiraUsername
+        val originalToken = settings.state.jiraApiToken
+
+        settings.state.jiraUrl = tempUrl
+        settings.state.jiraUsername = tempUsername
+        settings.state.jiraApiToken = tempToken
+
+        Thread {
+            val result = jiraApiService.testConnection()
+
+            // Restore original settings
+            settings.state.jiraUrl = originalUrl
+            settings.state.jiraUsername = originalUsername
+            settings.state.jiraApiToken = originalToken
+
+            SwingUtilities.invokeLater {
+                result.onSuccess {
+                    com.intellij.openapi.ui.Messages.showInfoMessage(
+                        project,
+                        "Successfully connected to Jira!\n\nConnection is working properly.",
+                        "Connection Test Successful"
+                    )
+                }.onFailure { error ->
+                    com.intellij.openapi.ui.Messages.showErrorDialog(
+                        project,
+                        "Failed to connect to Jira:\n\n${error.message}\n\nPlease check your credentials and URL.",
+                        "Connection Test Failed"
+                    )
+                }
+            }
+        }.start()
     }
 
     override fun getDisplayName(): String = "Jira Ticket Creator"
@@ -106,19 +115,8 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
                 separator()
 
                 row {
-                    button("Load Projects from Jira") { loadJiraMetadata() }
-                        .comment("Click to load available projects and issue types from your Jira instance")
-                }
-
-                row("Default Project:") {
-                    cell(projectKeyComboBox)
-                        .columns(20)
-                        .comment("Select or type a project key. Load projects first for dropdown options.")
-                }
-                row("Default Issue Type:") {
-                    cell(issueTypeComboBox)
-                        .columns(20)
-                        .comment("Select issue type. Will update based on selected project.")
+                    button("Test Jira Connection") { testJiraConnection() }
+                        .comment("Test your Jira credentials and connection")
                 }
             }
 
@@ -169,100 +167,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
         }
     }
 
-    private fun loadJiraMetadata() {
-        if (isLoadingMetadata) return
-
-        // Save current Jira credentials temporarily
-        val tempState = settings.state.copy()
-        tempState.jiraUrl = jiraUrlField.text
-        tempState.jiraUsername = jiraUsernameField.text
-        tempState.jiraApiToken = String(jiraApiTokenField.password)
-
-        // Temporarily apply settings for API calls
-        settings.state.jiraUrl = tempState.jiraUrl
-        settings.state.jiraUsername = tempState.jiraUsername
-        settings.state.jiraApiToken = tempState.jiraApiToken
-
-        isLoadingMetadata = true
-
-        Thread {
-            try {
-                // Load projects
-                val projectsResult = jiraApiService.getProjects()
-                projectsResult.onSuccess { projects ->
-                    SwingUtilities.invokeLater {
-                        projectKeyComboBox.removeAllItems()
-                        val projectItems = projects.map { project ->
-                            ProjectItem(project.key, project.name)
-                        }
-                        projectItems.forEach { projectKeyComboBox.addItem(it) }
-
-                        // Select current project if exists
-                        val currentKey = settings.state.defaultProjectKey
-                        val currentProject = projectItems.find { it.key == currentKey }
-                        if (currentProject != null) {
-                            projectKeyComboBox.selectedItem = currentProject
-                        } else if (projectItems.isNotEmpty()) {
-                            projectKeyComboBox.selectedIndex = 0
-                        }
-
-                        // Load issue types for selected project
-                        loadIssueTypesForProject()
-                    }
-                }.onFailure { error ->
-                    SwingUtilities.invokeLater {
-                        // Fall back to manual entry
-                        projectKeyComboBox.removeAllItems()
-                        projectKeyComboBox.addItem(
-                            ProjectItem(settings.state.defaultProjectKey, "Manual Entry")
-                        )
-                        println("Failed to load projects: ${error.message}")
-                    }
-                }
-            } catch (e: Exception) {
-                println("Error loading Jira metadata: ${e.message}")
-            } finally {
-                isLoadingMetadata = false
-            }
-        }.start()
-    }
-
-    private fun loadIssueTypesForProject() {
-        val selectedProject = projectKeyComboBox.selectedItem as? ProjectItem ?: return
-
-        Thread {
-            val issueTypesResult = jiraApiService.getIssueTypesForProject(selectedProject.key)
-            issueTypesResult.onSuccess { issueTypes ->
-                SwingUtilities.invokeLater {
-                    issueTypeComboBox.removeAllItems()
-
-                    // Filter out subtask types and add to combo box
-                    issueTypes.filter { !it.subtask }.forEach { issueType ->
-                        issueTypeComboBox.addItem(IssueTypeItem(issueType.id, issueType.name))
-                    }
-
-                    // Select current issue type if exists
-                    val currentType = settings.state.defaultIssueType
-                    for (i in 0 until issueTypeComboBox.itemCount) {
-                        val item = issueTypeComboBox.getItemAt(i)
-                        if (item.name == currentType) {
-                            issueTypeComboBox.selectedIndex = i
-                            break
-                        }
-                    }
-                }
-            }.onFailure { error ->
-                SwingUtilities.invokeLater {
-                    // Fall back to common issue types
-                    issueTypeComboBox.removeAllItems()
-                    arrayOf("Task", "Story", "Bug", "Epic").forEach {
-                        issueTypeComboBox.addItem(IssueTypeItem(it, it))
-                    }
-                    println("Failed to load issue types: ${error.message}")
-                }
-            }
-        }.start()
-    }
 
     private fun updateAIModels() {
         val provider = aiProviderComboBox.selectedItem as? String ?: return
@@ -295,22 +199,11 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
 
     override fun isModified(): Boolean {
         val state = settings.state
-        val selectedProject = projectKeyComboBox.selectedItem as? ProjectItem
-        val selectedIssueType = issueTypeComboBox.selectedItem as? IssueTypeItem
         val selectedLanguage = languageComboBox.selectedItem as? OutputLanguage
-
-        // Handle editable combo box text input
-        val projectKey = if (selectedProject != null) {
-            selectedProject.key
-        } else {
-            projectKeyComboBox.editor?.item?.toString() ?: ""
-        }
 
         return jiraUrlField.text != state.jiraUrl ||
                 jiraUsernameField.text != state.jiraUsername ||
                 String(jiraApiTokenField.password) != state.jiraApiToken ||
-                projectKey != state.defaultProjectKey ||
-                selectedIssueType?.name != state.defaultIssueType ||
                 aiProviderComboBox.selectedItem != state.aiProvider ||
                 String(aiApiKeyField.password) != state.aiApiKey ||
                 aiModelComboBox.selectedItem != state.aiModel ||
@@ -326,22 +219,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
         state.jiraUrl = jiraUrlField.text
         state.jiraUsername = jiraUsernameField.text
         state.jiraApiToken = String(jiraApiTokenField.password)
-
-        val selectedProject = projectKeyComboBox.selectedItem as? ProjectItem
-        if (selectedProject != null) {
-            state.defaultProjectKey = selectedProject.key
-        } else {
-            // Handle manual text entry
-            val manualKey = projectKeyComboBox.editor?.item?.toString()
-            if (!manualKey.isNullOrBlank()) {
-                state.defaultProjectKey = manualKey
-            }
-        }
-
-        val selectedIssueType = issueTypeComboBox.selectedItem as? IssueTypeItem
-        if (selectedIssueType != null) {
-            state.defaultIssueType = selectedIssueType.name
-        }
 
         state.aiProvider = aiProviderComboBox.selectedItem as? String ?: "anthropic"
         state.aiApiKey = String(aiApiKeyField.password)
@@ -378,16 +255,5 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
         autoDetectLanguage = state.autoDetectLanguage
         includeDiffInDescription = state.includeDiffInDescription
         linkToCommit = state.linkToCommit
-
-        // If we have saved project/issue type, set them as manual entries
-        projectKeyComboBox.removeAllItems()
-        projectKeyComboBox.addItem(
-            ProjectItem(state.defaultProjectKey, "Saved Project")
-        )
-        projectKeyComboBox.selectedIndex = 0
-
-        issueTypeComboBox.removeAllItems()
-        issueTypeComboBox.addItem(IssueTypeItem(state.defaultIssueType, state.defaultIssueType))
-        issueTypeComboBox.selectedIndex = 0
     }
 }

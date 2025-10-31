@@ -24,7 +24,17 @@ class JiraSettingsState : PersistentStateComponent<JiraSettingsState.State> {
         var autoDetectLanguage: Boolean = false,
         var lastUsedLanguage: String = "ko",
         var includeDiffInDescription: Boolean = true,
-        var linkToCommit: Boolean = true
+        var linkToCommit: Boolean = true,
+
+        // Last used values for ticket creation dialog
+        var lastUsedAiProvider: String = "anthropic",
+        var lastUsedAiModel: String = "claude-3-haiku-20240307",
+        var lastUsedProjectKey: String = "",
+        var lastUsedIssueType: String = "",
+        var lastUsedPriorityId: String = "",
+        var lastUsedEpicKey: String = "",
+        var lastUsedLabel: String = "",
+        var lastUsedComponentId: String = ""
     )
 
     private var myState = State()
