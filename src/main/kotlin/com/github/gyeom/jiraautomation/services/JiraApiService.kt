@@ -28,7 +28,17 @@ class JiraApiService(private val project: Project) {
         description: String,
         projectKey: String? = null,
         issueType: String? = null,
-        priority: String? = null
+        priority: String? = null,
+        assigneeAccountId: String? = null,
+        reporterAccountId: String? = null,
+        epicKey: String? = null,
+        sprintId: Long? = null,
+        labels: List<String> = emptyList(),
+        components: List<JiraComponent> = emptyList(),
+        storyPoints: Double? = null,
+        originalEstimate: String? = null,
+        startDate: String? = null,
+        dueDate: String? = null
     ): Result<JiraIssueResponse> {
         val state = settings.state
 
@@ -54,15 +64,55 @@ class JiraApiService(private val project: Project) {
 
         val descriptionContent = convertMarkdownToJiraFormat(description)
 
-        // Build fields with optional priority
+        // Build fields with optional priority, assignee, reporter, and epic
         val fields = JiraIssueFields(
             project = JiraProject(key = projectKeyToUse),
             summary = title,
             description = descriptionContent,
             issuetype = JiraIssueType(name = issueTypeToUse),
+            assignee = assigneeAccountId?.let {
+                println("Setting assignee with accountId: $it")
+                JiraAssignee(accountId = it)
+            },
+            reporter = reporterAccountId?.let {
+                println("Setting reporter with accountId: $it")
+                JiraReporter(accountId = it)
+            },
             priority = priority?.let {
                 println("Setting priority with ID: $it")
                 JiraPriority(id = it)
+            },
+            customfield_10014 = epicKey?.let {
+                println("Setting epic link: $it")
+                it
+            },
+            customfield_10020 = sprintId?.let {
+                println("Setting sprint: $it")
+                it
+            },
+            labels = if (labels.isNotEmpty()) {
+                println("Setting labels: ${labels.joinToString(", ")}")
+                labels
+            } else null,
+            components = if (components.isNotEmpty()) {
+                println("Setting components: ${components.map { it.name }.joinToString(", ")}")
+                components.map { ComponentReference(id = it.id) }
+            } else null,
+            timetracking = originalEstimate?.let {
+                println("Setting time tracking: originalEstimate=$it")
+                JiraTimeTracking(originalEstimate = it)
+            },
+            customfield_10016 = storyPoints?.let {
+                println("Setting story points: $it")
+                it
+            },
+            customfield_10015 = startDate?.let {
+                println("Setting start date: $it")
+                it
+            },
+            duedate = dueDate?.let {
+                println("Setting due date: $it")
+                it
             }
         )
 
@@ -453,6 +503,791 @@ class JiraApiService(private val project: Project) {
             }
         } catch (e: Exception) {
             Result.failure(Exception("Failed to connect to Jira: ${e.message}", e))
+        }
+    }
+
+    /**
+     * 현재 사용자 정보 가져오기
+     */
+    fun getCurrentUser(): Result<CurrentUser> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        return try {
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+            val request = Request.Builder()
+                .url("${state.jiraUrl}/rest/api/3/myself")
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val userData = gson.fromJson(responseBody, Map::class.java)
+
+                val currentUser = CurrentUser(
+                    accountId = userData["accountId"] as String,
+                    displayName = userData["displayName"] as String,
+                    emailAddress = userData["emailAddress"] as? String,
+                    avatarUrls = (userData["avatarUrls"] as? Map<String, String>) ?: emptyMap(),
+                    active = userData["active"] as? Boolean ?: true,
+                    locale = userData["locale"] as? String,
+                    timeZone = userData["timeZone"] as? String
+                )
+                Result.success(currentUser)
+            } else {
+                Result.failure(Exception("Failed to get current user: ${response.message}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 사용자 검색
+     * @param query 검색 쿼리 (이름 또는 이메일)
+     * @param projectKey 프로젝트 키 (할당 가능한 사용자만 필터링)
+     * @param maxResults 최대 결과 수
+     */
+    fun searchUsers(
+        query: String,
+        projectKey: String? = null,
+        maxResults: Int = 50
+    ): Result<List<JiraUser>> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        return try {
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+
+            // 프로젝트가 지정된 경우 할당 가능한 사용자 검색
+            val endpoint = if (projectKey != null) {
+                "${state.jiraUrl}/rest/api/3/user/assignable/search?project=$projectKey&query=$query&maxResults=$maxResults"
+            } else {
+                "${state.jiraUrl}/rest/api/3/user/search?query=$query&maxResults=$maxResults"
+            }
+
+            val request = Request.Builder()
+                .url(endpoint)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val userDataArray: Array<*> = gson.fromJson(responseBody, Array::class.java)
+                val users = userDataArray
+                    .mapNotNull { item ->
+                        val userData = item as? Map<*, *> ?: return@mapNotNull null
+                        JiraUser(
+                            accountId = userData["accountId"] as String,
+                            displayName = userData["displayName"] as String,
+                            emailAddress = userData["emailAddress"] as? String,
+                            avatarUrls = (userData["avatarUrls"] as? Map<String, String>) ?: emptyMap(),
+                            active = userData["active"] as? Boolean ?: true,
+                            self = userData["self"] as? String
+                        )
+                    }
+                Result.success(users)
+            } else {
+                Result.failure(Exception("Failed to search users: ${response.message}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 프로젝트에 할당 가능한 사용자 목록 가져오기
+     */
+    fun getAssignableUsers(
+        projectKey: String,
+        issueKey: String? = null
+    ): Result<List<JiraUser>> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        return try {
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+
+            val endpoint = if (issueKey != null) {
+                "${state.jiraUrl}/rest/api/3/user/assignable/search?issueKey=$issueKey"
+            } else {
+                "${state.jiraUrl}/rest/api/3/user/assignable/search?project=$projectKey"
+            }
+
+            val request = Request.Builder()
+                .url(endpoint)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val userDataArray: Array<*> = gson.fromJson(responseBody, Array::class.java)
+                val users = userDataArray
+                    .mapNotNull { item ->
+                        val userData = item as? Map<*, *> ?: return@mapNotNull null
+                        JiraUser(
+                            accountId = userData["accountId"] as String,
+                            displayName = userData["displayName"] as String,
+                            emailAddress = userData["emailAddress"] as? String,
+                            avatarUrls = (userData["avatarUrls"] as? Map<String, String>) ?: emptyMap(),
+                            active = userData["active"] as? Boolean ?: true,
+                            self = userData["self"] as? String
+                        )
+                    }
+                Result.success(users)
+            } else {
+                Result.failure(Exception("Failed to get assignable users: ${response.message}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 프로젝트의 모든 Epic 조회
+     */
+    fun getEpics(projectKey: String): Result<List<Epic>> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        return try {
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+
+            // First, we need to find the board ID for the project
+            val boardsUrl = "${state.jiraUrl}/rest/agile/1.0/board?projectKeyOrId=$projectKey"
+            val boardsRequest = Request.Builder()
+                .url(boardsUrl)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .build()
+
+            val boardsResponse = client.newCall(boardsRequest).execute()
+            val boardsResponseBody = boardsResponse.body?.string()
+
+            if (!boardsResponse.isSuccessful || boardsResponseBody == null) {
+                println("No boards found, falling back to JQL search")
+                return getEpicsByJQL(projectKey)
+            }
+
+            val boardsData = gson.fromJson(boardsResponseBody, Map::class.java)
+            val boards = boardsData["values"] as? List<Map<String, Any>> ?: emptyList()
+
+            if (boards.isEmpty()) {
+                println("No boards found for project $projectKey, trying JQL search")
+                // If no board found, try JQL query
+                return getEpicsByJQL(projectKey)
+            }
+
+            val boardId = boards.first()["id"]
+
+            // Get epics from the board
+            val epicsUrl = "${state.jiraUrl}/rest/agile/1.0/board/$boardId/epic"
+            val request = Request.Builder()
+                .url(epicsUrl)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val epicsData = gson.fromJson(responseBody, Map::class.java)
+                val epicValues = epicsData["values"] as? List<Map<String, Any>> ?: emptyList()
+
+                val epics = epicValues.map { epicData ->
+                    Epic(
+                        id = epicData["id"].toString(),
+                        key = epicData["key"] as String,
+                        self = epicData["self"] as String,
+                        name = epicData["name"] as? String ?: epicData["key"] as String,
+                        summary = epicData["summary"] as? String ?: "",
+                        done = epicData["done"] as? Boolean ?: false,
+                        color = (epicData["color"] as? Map<String, Any>)?.let {
+                            EpicColor(key = it["key"] as String)
+                        }
+                    )
+                }
+                Result.success(epics)
+            } else {
+                // Fall back to JQL query
+                getEpicsByJQL(projectKey)
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * JQL을 사용한 Epic 조회 (폴백 메서드)
+     */
+    private fun getEpicsByJQL(projectKey: String): Result<List<Epic>> {
+        val state = settings.state
+
+        return try {
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+            val jql = "project = $projectKey AND issuetype = Epic ORDER BY created DESC"
+
+            println("Searching epics with JQL: $jql")
+
+            // Use the new POST endpoint with JQL in body
+            val searchUrl = "${state.jiraUrl}/rest/api/3/search/jql"
+            val requestBody = gson.toJson(mapOf(
+                "jql" to jql,
+                "fields" to listOf("summary", "status", "key", "id"),
+                "maxResults" to 100
+            ))
+
+            val request = Request.Builder()
+                .url(searchUrl)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .post(requestBody.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val searchData = gson.fromJson(responseBody, Map::class.java)
+                val issues = searchData["issues"] as? List<Map<String, Any>> ?: emptyList()
+
+                println("Found ${issues.size} epics for project $projectKey")
+
+                val epics = issues.map { issue ->
+                    val fields = issue["fields"] as Map<String, Any>
+                    val status = fields["status"] as? Map<String, Any>
+                    val isDone = status?.get("statusCategory") as? Map<String, Any>
+
+                    Epic(
+                        id = issue["id"] as String,
+                        key = issue["key"] as String,
+                        self = issue["self"] as String,
+                        name = fields["summary"] as String,
+                        summary = fields["summary"] as String,
+                        done = isDone?.get("key") == "done"
+                    )
+                }
+                Result.success(epics)
+            } else {
+                println("Failed to search epics: ${response.code} - $responseBody")
+                Result.failure(Exception("Failed to search epics: ${response.code}"))
+            }
+        } catch (e: Exception) {
+            println("Exception while searching epics: ${e.message}")
+            e.printStackTrace()
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 프로젝트의 모든 Sprint 조회
+     */
+    fun getSprints(projectKey: String): Result<List<Sprint>> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        return try {
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+
+            // First, find the board ID for the project - try both scrum and kanban
+            println("Looking for boards for project: $projectKey")
+
+            // Try scrum boards first
+            var boardsUrl = "${state.jiraUrl}/rest/agile/1.0/board?projectKeyOrId=$projectKey"
+            var boardsRequest = Request.Builder()
+                .url(boardsUrl)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .build()
+
+            val boardsResponse = client.newCall(boardsRequest).execute()
+            val boardsResponseBody = boardsResponse.body?.string()
+
+            if (!boardsResponse.isSuccessful || boardsResponseBody == null) {
+                println("Failed to get boards: ${boardsResponse.code} - $boardsResponseBody")
+                return Result.success(emptyList()) // Return empty list instead of failure
+            }
+
+            val boardsData = gson.fromJson(boardsResponseBody, Map::class.java)
+            val boards = boardsData["values"] as? List<Map<String, Any>> ?: emptyList()
+
+            println("Found ${boards.size} boards for project $projectKey")
+
+            if (boards.isEmpty()) {
+                println("No boards found for project $projectKey")
+                return Result.success(emptyList())
+            }
+
+            val boardId = (boards.first()["id"] as Double).toLong()
+            println("Using board ID: $boardId")
+
+            // Get sprints from the board - include state parameter
+            val sprintsUrl = "${state.jiraUrl}/rest/agile/1.0/board/$boardId/sprint?state=active,future"
+            println("Fetching sprints from: $sprintsUrl")
+
+            val request = Request.Builder()
+                .url(sprintsUrl)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val sprintsData = gson.fromJson(responseBody, Map::class.java)
+                val sprintValues = sprintsData["values"] as? List<Map<String, Any>> ?: emptyList()
+
+                println("Found ${sprintValues.size} sprints")
+
+                val sprints = sprintValues.mapNotNull { sprintData ->
+                    try {
+                        Sprint(
+                            id = (sprintData["id"] as Double).toLong(),
+                            self = sprintData["self"] as String,
+                            state = (sprintData["state"] as String).uppercase(),  // Convert to uppercase
+                            name = sprintData["name"] as String,
+                            startDate = sprintData["startDate"] as? String,
+                            endDate = sprintData["endDate"] as? String,
+                            completeDate = sprintData["completeDate"] as? String,
+                            originBoardId = (sprintData["originBoardId"] as? Double)?.toLong(),
+                            goal = sprintData["goal"] as? String
+                        )
+                    } catch (e: Exception) {
+                        println("Error parsing sprint: ${e.message}")
+                        null
+                    }
+                }
+
+                // Sort sprints: ACTIVE first, then FUTURE, then CLOSED
+                val sortedSprints = sprints.sortedWith(compareBy(
+                    { it.state != "ACTIVE" },
+                    { it.state != "FUTURE" },
+                    { it.name }
+                ))
+
+                Result.success(sortedSprints)
+            } else {
+                println("Failed to get sprints: ${response.code} - $responseBody")
+                Result.success(emptyList()) // Return empty list instead of failure
+            }
+        } catch (e: Exception) {
+            println("Exception while getting sprints: ${e.message}")
+            e.printStackTrace()
+            Result.success(emptyList()) // Return empty list instead of failure
+        }
+    }
+
+    /**
+     * 하위작업 생성
+     */
+    fun createSubtask(
+        parentKey: String,
+        summary: String,
+        description: String? = null,
+        issueType: String = "Sub-task",
+        assignee: String? = null,
+        priority: String? = null,
+        labels: List<String> = emptyList()
+    ): Result<JiraIssueResponse> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        val descriptionContent = description?.let { convertMarkdownToJiraFormat(it) }
+
+        val fields = JiraIssueFields(
+            project = JiraProject(key = parentKey.substringBefore("-")),
+            summary = summary,
+            description = descriptionContent,
+            issuetype = JiraIssueType(name = issueType),
+            assignee = assignee?.let { JiraAssignee(accountId = it) },
+            priority = priority?.let { JiraPriority(name = it) }
+        )
+
+        val issueRequest = JiraIssueRequest(fields = fields)
+
+        return try {
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+            val json = gson.toJson(issueRequest)
+            val requestBody = json.toRequestBody("application/json".toMediaType())
+
+            val request = Request.Builder()
+                .url("${state.jiraUrl}/rest/api/3/issue")
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .post(requestBody)
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val issueResponse = gson.fromJson(responseBody, JiraIssueResponse::class.java)
+                Result.success(issueResponse)
+            } else {
+                val errorResponse = try {
+                    gson.fromJson(responseBody, JiraErrorResponse::class.java)
+                } catch (e: Exception) {
+                    null
+                }
+
+                val errorMessage = errorResponse?.errorMessages?.joinToString(", ")
+                    ?: errorResponse?.errors?.map { "${it.key}: ${it.value}" }?.joinToString(", ")
+                    ?: responseBody ?: "Unknown error"
+
+                Result.failure(Exception("Failed to create subtask: $errorMessage"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 프로젝트의 컴포넌트 목록 조회
+     */
+    fun getProjectComponents(projectKey: String): Result<List<JiraComponent>> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        return try {
+            val url = "${state.jiraUrl.trimEnd('/')}/rest/api/3/project/$projectKey/components"
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val components = gson.fromJson(responseBody, Array<JiraComponent>::class.java)
+                println("Found ${components.size} components for project $projectKey")
+                Result.success(components.toList())
+            } else {
+                println("Failed to get components: ${response.code} - $responseBody")
+                Result.failure(Exception("Failed to get components: ${response.code}"))
+            }
+        } catch (e: Exception) {
+            println("Error getting components: ${e.message}")
+            e.printStackTrace()
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 프로젝트에서 사용된 라벨 목록 조회
+     * Jira API는 직접적인 프로젝트별 라벨 목록 제공하지 않으므로
+     * 최근 이슈들에서 사용된 라벨을 수집
+     */
+    fun getProjectLabels(projectKey: String): Result<List<String>> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        return try {
+            // Search for recent issues in the project to collect labels
+            val jql = "project = $projectKey ORDER BY created DESC"
+            val searchUrl = "${state.jiraUrl}/rest/api/3/search/jql"
+
+            val requestBody = gson.toJson(mapOf(
+                "jql" to jql,
+                "fields" to listOf("labels"),
+                "maxResults" to 100
+            ))
+
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+            val request = Request.Builder()
+                .url(searchUrl)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .post(requestBody.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val searchResult = gson.fromJson(responseBody, Map::class.java)
+                val issues = searchResult["issues"] as? List<Map<String, Any>> ?: emptyList()
+
+                // Collect all unique labels from issues
+                val labelSet = mutableSetOf<String>()
+                issues.forEach { issue ->
+                    val fields = issue["fields"] as? Map<String, Any> ?: return@forEach
+                    val labels = fields["labels"] as? List<String> ?: return@forEach
+                    labelSet.addAll(labels)
+                }
+
+                val sortedLabels = labelSet.toList().sorted()
+                println("Found ${sortedLabels.size} unique labels in project $projectKey")
+                Result.success(sortedLabels)
+            } else {
+                println("Failed to search for labels: ${response.code}")
+                Result.success(emptyList()) // Return empty list instead of error
+            }
+        } catch (e: Exception) {
+            println("Error getting labels: ${e.message}")
+            Result.success(emptyList()) // Return empty list on error
+        }
+    }
+
+    /**
+     * 라벨 자동완성을 위한 검색
+     */
+    fun searchLabels(query: String): Result<List<String>> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        return try {
+            val url = "${state.jiraUrl.trimEnd('/')}/rest/api/3/label/suggestions?query=$query"
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val result = gson.fromJson(responseBody, Map::class.java)
+                val suggestions = result["suggestions"] as? List<String> ?: emptyList()
+                Result.success(suggestions)
+            } else {
+                Result.success(emptyList())
+            }
+        } catch (e: Exception) {
+            println("Error searching labels: ${e.message}")
+            Result.success(emptyList())
+        }
+    }
+
+    /**
+     * 이슈 링크 타입 목록 조회
+     */
+    fun getIssueLinkTypes(): Result<List<IssueLinkType>> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        return try {
+            val url = "${state.jiraUrl.trimEnd('/')}/rest/api/3/issueLinkType"
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val result = gson.fromJson(responseBody, Map::class.java)
+                val issueLinkTypes = result["issueLinkTypes"] as? List<Map<String, Any>> ?: emptyList()
+
+                val linkTypes = issueLinkTypes.map { linkType ->
+                    IssueLinkType(
+                        id = linkType["id"]?.toString(),
+                        name = linkType["name"]?.toString() ?: "",
+                        inward = linkType["inward"]?.toString() ?: "",
+                        outward = linkType["outward"]?.toString() ?: "",
+                        self = linkType["self"]?.toString()
+                    )
+                }
+
+                println("Found ${linkTypes.size} issue link types")
+                Result.success(linkTypes)
+            } else {
+                println("Failed to get issue link types: ${response.code}")
+                Result.failure(Exception("Failed to get issue link types"))
+            }
+        } catch (e: Exception) {
+            println("Error getting issue link types: ${e.message}")
+            e.printStackTrace()
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 이슈 검색 (링크할 이슈 찾기용)
+     */
+    fun searchIssuesForLinking(projectKey: String, searchText: String): Result<List<LinkedIssue>> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        return try {
+            val jql = if (searchText.matches(Regex("^[A-Z]+-\\d+$"))) {
+                // If it's an issue key format, search directly
+                "key = $searchText"
+            } else {
+                // Otherwise search in summary and project
+                "project = $projectKey AND (summary ~ \"$searchText*\" OR key = \"$searchText\") ORDER BY created DESC"
+            }
+
+            val searchUrl = "${state.jiraUrl}/rest/api/3/search/jql"
+            val requestBody = gson.toJson(mapOf(
+                "jql" to jql,
+                "fields" to listOf("summary", "status", "issuetype", "priority"),
+                "maxResults" to 20
+            ))
+
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+            val request = Request.Builder()
+                .url(searchUrl)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .post(requestBody.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val searchResult = gson.fromJson(responseBody, Map::class.java)
+                val issues = searchResult["issues"] as? List<Map<String, Any>> ?: emptyList()
+
+                val linkedIssues = issues.map { issue ->
+                    val fields = issue["fields"] as? Map<String, Any> ?: emptyMap()
+                    LinkedIssue(
+                        id = issue["id"] as String,
+                        key = issue["key"] as String,
+                        self = issue["self"] as String,
+                        fields = LinkedIssueFields(
+                            summary = fields["summary"] as? String,
+                            status = (fields["status"] as? Map<String, Any>)?.let {
+                                IssueStatus(
+                                    name = it["name"] as? String ?: "",
+                                    id = it["id"] as? String ?: ""
+                                )
+                            },
+                            issuetype = (fields["issuetype"] as? Map<String, Any>)?.let {
+                                JiraIssueType(name = it["name"] as? String ?: "")
+                            },
+                            priority = (fields["priority"] as? Map<String, Any>)?.let {
+                                JiraPriority(
+                                    id = it["id"] as? String,
+                                    name = it["name"] as? String
+                                )
+                            }
+                        )
+                    )
+                }
+
+                println("Found ${linkedIssues.size} issues for linking")
+                Result.success(linkedIssues)
+            } else {
+                println("Failed to search issues for linking: ${response.code}")
+                Result.success(emptyList())
+            }
+        } catch (e: Exception) {
+            println("Error searching issues for linking: ${e.message}")
+            Result.success(emptyList())
+        }
+    }
+
+    /**
+     * 이슈 링크 생성
+     */
+    fun createIssueLink(
+        inwardIssue: String,
+        outwardIssue: String,
+        linkType: String,
+        comment: String? = null
+    ): Result<Unit> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        return try {
+            val linkRequest = CreateIssueLinkRequest(
+                type = IssueLinkTypeRef(name = linkType),
+                inwardIssue = IssueRef(key = inwardIssue),
+                outwardIssue = IssueRef(key = outwardIssue),
+                comment = comment?.let { LinkComment(body = it) }
+            )
+
+            val json = gson.toJson(linkRequest)
+            val requestBody = json.toRequestBody("application/json".toMediaType())
+
+            val url = "${state.jiraUrl.trimEnd('/')}/rest/api/3/issueLink"
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .post(requestBody)
+                .build()
+
+            val response = client.newCall(request).execute()
+
+            if (response.isSuccessful) {
+                println("Successfully created link between $inwardIssue and $outwardIssue")
+                Result.success(Unit)
+            } else {
+                val responseBody = response.body?.string()
+                println("Failed to create issue link: ${response.code} - $responseBody")
+                Result.failure(Exception("Failed to create issue link: ${response.code}"))
+            }
+        } catch (e: Exception) {
+            println("Error creating issue link: ${e.message}")
+            e.printStackTrace()
+            Result.failure(e)
         }
     }
 }

@@ -1,5 +1,7 @@
 package com.github.gyeom.jiraautomation.model
 
+// ComponentReference is defined in JiraComponent.kt
+
 data class JiraIssueRequest(
     val fields: JiraIssueFields
 )
@@ -10,7 +12,16 @@ data class JiraIssueFields(
     val description: JiraDescription?,
     val issuetype: JiraIssueType,
     val assignee: JiraAssignee? = null,
-    val priority: JiraPriority? = null
+    val reporter: JiraReporter? = null,
+    val priority: JiraPriority? = null,
+    val customfield_10014: String? = null,  // Epic Link field (customfield ID may vary)
+    val customfield_10020: Long? = null,     // Sprint field (customfield ID may vary)
+    val labels: List<String>? = null,        // Labels
+    val components: List<ComponentReference>? = null,  // Components
+    val timetracking: JiraTimeTracking? = null,  // Time tracking
+    val customfield_10016: Double? = null,   // Story Points (customfield ID may vary)
+    val duedate: String? = null,             // Due date in YYYY-MM-DD format
+    val customfield_10015: String? = null    // Start date (customfield ID may vary)
 )
 
 data class JiraProject(
@@ -49,9 +60,20 @@ data class JiraAssignee(
     val emailAddress: String? = null
 )
 
+data class JiraReporter(
+    val accountId: String? = null,
+    val emailAddress: String? = null
+)
+
 data class JiraPriority(
     val id: String? = null,
     val name: String? = null
+)
+
+data class JiraTimeTracking(
+    val originalEstimate: String? = null,    // e.g., "3h", "2d", "1w"
+    val remainingEstimate: String? = null,   // e.g., "1h 30m"
+    val timeSpent: String? = null           // e.g., "30m"
 )
 
 data class JiraIssueResponse(
