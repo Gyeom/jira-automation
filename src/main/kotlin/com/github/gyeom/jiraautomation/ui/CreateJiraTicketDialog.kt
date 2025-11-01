@@ -757,28 +757,41 @@ class CreateJiraTicketDialog(
         val provider = aiProviderComboBox.selectedItem as? String ?: return
 
         aiModelComboBox.removeAllItems()
+        aiModelComboBox.addItem("Loading models...")
+        aiModelComboBox.isEnabled = false
 
-        val models = when (provider) {
-            "openai" -> listOf(
-                "gpt-4-turbo-preview",
-                "gpt-4-turbo",
-                "gpt-4",
-                "gpt-3.5-turbo"
-            )
-            "anthropic" -> listOf(
-                "claude-3-opus-20240229",
-                "claude-3-sonnet-20240229",
-                "claude-3-haiku-20240307"
-            )
-            else -> emptyList()
-        }
+        // Fetch models from API in background
+        Thread {
+            val apiKey = settings.state.aiApiKey
+            val result = when (provider.lowercase()) {
+                "openai" -> if (apiKey.isNotEmpty()) aiService.fetchOpenAIModels(apiKey) else null
+                "anthropic" -> if (apiKey.isNotEmpty()) aiService.fetchAnthropicModels(apiKey) else null
+                else -> null
+            }
 
-        models.forEach { aiModelComboBox.addItem(it) }
+            val models = result?.getOrNull() ?: aiService.getFallbackModels(provider)
 
-        // Select the default model for this provider
-        if (provider == settings.state.aiProvider && models.contains(settings.state.aiModel)) {
-            aiModelComboBox.selectedItem = settings.state.aiModel
-        }
+            SwingUtilities.invokeLater {
+                aiModelComboBox.removeAllItems()
+
+                if (models.isEmpty()) {
+                    aiModelComboBox.addItem("No models available")
+                } else {
+                    models.forEach { aiModelComboBox.addItem(it) }
+
+                    // Select the last used or default model
+                    val lastModel = settings.state.lastUsedAiModel.takeIf { it.isNotEmpty() }
+                        ?: settings.state.aiModel
+                    if (models.contains(lastModel)) {
+                        aiModelComboBox.selectedItem = lastModel
+                    } else if (models.isNotEmpty()) {
+                        aiModelComboBox.selectedIndex = 0
+                    }
+                }
+
+                aiModelComboBox.isEnabled = true
+            }
+        }.start()
     }
 
     private fun generateTicket() {

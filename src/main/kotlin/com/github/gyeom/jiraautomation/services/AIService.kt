@@ -218,4 +218,99 @@ Important:
             )
         }
     }
+
+    /**
+     * Fetch available models from OpenAI API
+     */
+    fun fetchOpenAIModels(apiKey: String): Result<List<String>> {
+        try {
+            val request = Request.Builder()
+                .url("https://api.openai.com/v1/models")
+                .header("Authorization", "Bearer $apiKey")
+                .get()
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string() ?: ""
+
+            if (response.isSuccessful) {
+                val jsonResponse = gson.fromJson(responseBody, JsonObject::class.java)
+                val data = jsonResponse.getAsJsonArray("data")
+
+                val models = data
+                    .map { it.asJsonObject.get("id").asString }
+                    .filter { it.startsWith("gpt-") } // Only GPT models
+                    .sorted()
+                    .reversed() // Newer models first
+
+                println("Fetched ${models.size} OpenAI models")
+                return Result.success(models)
+            } else {
+                println("Failed to fetch OpenAI models: ${response.code}")
+                return Result.failure(Exception("Failed to fetch models: ${response.code}"))
+            }
+        } catch (e: Exception) {
+            println("Error fetching OpenAI models: ${e.message}")
+            return Result.failure(e)
+        }
+    }
+
+    /**
+     * Fetch available models from Anthropic API
+     */
+    fun fetchAnthropicModels(apiKey: String): Result<List<String>> {
+        try {
+            val request = Request.Builder()
+                .url("https://api.anthropic.com/v1/models")
+                .header("x-api-key", apiKey)
+                .header("anthropic-version", "2023-06-01")
+                .get()
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string() ?: ""
+
+            if (response.isSuccessful) {
+                val jsonResponse = gson.fromJson(responseBody, JsonObject::class.java)
+                val data = jsonResponse.getAsJsonArray("data")
+
+                val models = data
+                    .map { it.asJsonObject.get("id").asString }
+                    .sorted()
+                    .reversed() // Newer models first
+
+                println("Fetched ${models.size} Anthropic models")
+                return Result.success(models)
+            } else {
+                println("Failed to fetch Anthropic models: ${response.code}")
+                return Result.failure(Exception("Failed to fetch models: ${response.code}"))
+            }
+        } catch (e: Exception) {
+            println("Error fetching Anthropic models: ${e.message}")
+            return Result.failure(e)
+        }
+    }
+
+    /**
+     * Get fallback models if API fetch fails
+     */
+    fun getFallbackModels(provider: String): List<String> {
+        return when (provider.lowercase()) {
+            "openai" -> listOf(
+                "gpt-4o",
+                "gpt-4o-mini",
+                "gpt-4-turbo",
+                "gpt-4",
+                "gpt-3.5-turbo"
+            )
+            "anthropic" -> listOf(
+                "claude-3-5-sonnet-20241022",
+                "claude-3-5-haiku-20241022",
+                "claude-3-opus-20240229",
+                "claude-3-sonnet-20240229",
+                "claude-3-haiku-20240307"
+            )
+            else -> emptyList()
+        }
+    }
 }

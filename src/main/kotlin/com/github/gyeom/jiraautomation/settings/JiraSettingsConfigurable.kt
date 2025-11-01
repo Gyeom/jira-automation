@@ -1,6 +1,7 @@
 package com.github.gyeom.jiraautomation.settings
 
 import com.github.gyeom.jiraautomation.model.*
+import com.github.gyeom.jiraautomation.services.AIService
 import com.github.gyeom.jiraautomation.services.JiraApiService
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.Configurable
@@ -17,6 +18,7 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
 
     private val settings = JiraSettingsState.getInstance(project)
     private val jiraApiService = project.service<JiraApiService>()
+    private val aiService = project.service<AIService>()
 
     // Jira fields
     private val jiraUrlField = JBTextField()
@@ -172,29 +174,42 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
         val provider = aiProviderComboBox.selectedItem as? String ?: return
 
         aiModelComboBox.removeAllItems()
+        aiModelComboBox.addItem("Loading models...")
+        aiModelComboBox.isEnabled = false
 
-        val models = when (provider) {
-            "openai" -> listOf(
-                "gpt-4-turbo-preview",
-                "gpt-4-turbo",
-                "gpt-4",
-                "gpt-3.5-turbo"
-            )
-            "anthropic" -> listOf(
-                "claude-3-opus-20240229",
-                "claude-3-sonnet-20240229",
-                "claude-3-haiku-20240307"
-            )
-            else -> emptyList()
-        }
+        // Fetch models from API in background
+        Thread {
+            val apiKey = String(aiApiKeyField.password).takeIf { it.isNotEmpty() }
+                ?: settings.state.aiApiKey
 
-        models.forEach { aiModelComboBox.addItem(it) }
+            val result = when (provider.lowercase()) {
+                "openai" -> if (apiKey.isNotEmpty()) aiService.fetchOpenAIModels(apiKey) else null
+                "anthropic" -> if (apiKey.isNotEmpty()) aiService.fetchAnthropicModels(apiKey) else null
+                else -> null
+            }
 
-        // Select the current model if it exists
-        val currentModel = settings.state.aiModel
-        if (models.contains(currentModel)) {
-            aiModelComboBox.selectedItem = currentModel
-        }
+            val models = result?.getOrNull() ?: aiService.getFallbackModels(provider)
+
+            SwingUtilities.invokeLater {
+                aiModelComboBox.removeAllItems()
+
+                if (models.isEmpty()) {
+                    aiModelComboBox.addItem("No models available")
+                } else {
+                    models.forEach { aiModelComboBox.addItem(it) }
+
+                    // Select the current model if it exists
+                    val currentModel = settings.state.aiModel
+                    if (models.contains(currentModel)) {
+                        aiModelComboBox.selectedItem = currentModel
+                    } else if (models.isNotEmpty()) {
+                        aiModelComboBox.selectedIndex = 0
+                    }
+                }
+
+                aiModelComboBox.isEnabled = true
+            }
+        }.start()
     }
 
     override fun isModified(): Boolean {
