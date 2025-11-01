@@ -88,9 +88,9 @@ class CreateJiraTicketDialog(
     private var isLoadingComponents = false
     private var isLoadingLabels = false
 
-    // Loading indicator UI
-    private val loadingLabel = JBLabel()
-    private val loadingProgressBar = com.intellij.ui.components.JBLoadingPanel(BorderLayout(), project)
+    // Loading indicator UI (will be set in createCenterPanel)
+    private lateinit var contentPanel: JPanel
+    private lateinit var loadingPanel: com.intellij.ui.components.JBLoadingPanel
 
     // Store all loaded data for filtering
     private var allSprints = listOf<Sprint>()
@@ -183,30 +183,19 @@ class CreateJiraTicketDialog(
     }
 
     override fun createCenterPanel(): JComponent {
-        val mainPanel = JPanel(GridBagLayout())
+        // Create the main content panel
+        contentPanel = JPanel(GridBagLayout())
         val gbc = GridBagConstraints()
         gbc.fill = GridBagConstraints.HORIZONTAL
         gbc.insets = Insets(5, 5, 5, 5)
 
         var row = 0
 
-        // Loading indicator at the top
-        gbc.gridx = 0
-        gbc.gridy = row
-        gbc.gridwidth = 2
-        gbc.weightx = 1.0
-        loadingLabel.text = "Loading metadata..."
-        loadingLabel.foreground = java.awt.Color.GRAY
-        loadingLabel.isVisible = false
-        mainPanel.add(loadingLabel, gbc)
-        gbc.gridwidth = 1
-        row++
-
         // Language selection
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Output Language:"), gbc)
+        contentPanel.add(JBLabel("Output Language:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
@@ -217,18 +206,18 @@ class CreateJiraTicketDialog(
         regenerateButton.addActionListener { generateTicket() }
         languagePanel.add(regenerateButton, BorderLayout.EAST)
 
-        mainPanel.add(languagePanel, gbc)
+        contentPanel.add(languagePanel, gbc)
         row++
 
         // Title
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Title:"), gbc)
+        contentPanel.add(JBLabel("Title:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
-        mainPanel.add(titleField, gbc)
+        contentPanel.add(titleField, gbc)
         row++
 
         // Description
@@ -236,7 +225,7 @@ class CreateJiraTicketDialog(
         gbc.gridy = row
         gbc.weightx = 0.0
         gbc.anchor = GridBagConstraints.NORTHWEST
-        mainPanel.add(JBLabel("Description:"), gbc)
+        contentPanel.add(JBLabel("Description:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
@@ -246,7 +235,7 @@ class CreateJiraTicketDialog(
         descriptionArea.wrapStyleWord = true
         val descScrollPane = JBScrollPane(descriptionArea)
         descScrollPane.preferredSize = Dimension(600, 300)
-        mainPanel.add(descScrollPane, gbc)
+        contentPanel.add(descScrollPane, gbc)
         row++
 
         gbc.fill = GridBagConstraints.HORIZONTAL
@@ -257,7 +246,7 @@ class CreateJiraTicketDialog(
         gbc.gridx = 0
         gbc.gridy = row
         gbc.gridwidth = 2
-        mainPanel.add(JSeparator(), gbc)
+        contentPanel.add(JSeparator(), gbc)
         gbc.gridwidth = 1
         row++
 
@@ -265,29 +254,29 @@ class CreateJiraTicketDialog(
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Project Key:"), gbc)
+        contentPanel.add(JBLabel("Project Key:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
-        mainPanel.add(projectKeyComboBox, gbc)
+        contentPanel.add(projectKeyComboBox, gbc)
         row++
 
         // Issue Type
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Issue Type:"), gbc)
+        contentPanel.add(JBLabel("Issue Type:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
-        mainPanel.add(issueTypeComboBox, gbc)
+        contentPanel.add(issueTypeComboBox, gbc)
         row++
 
         // Parent Issue (optional - for creating subtasks)
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Parent Issue (optional):"), gbc)
+        contentPanel.add(JBLabel("Parent Issue (optional):"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
@@ -300,7 +289,7 @@ class CreateJiraTicketDialog(
         parentButtonPanel.add(Box.createHorizontalStrut(5))
         parentButtonPanel.add(validateParentButton)
         parentPanel.add(parentButtonPanel, BorderLayout.EAST)
-        mainPanel.add(parentPanel, gbc)
+        contentPanel.add(parentPanel, gbc)
         row++
 
         // Setup search button listener
@@ -342,22 +331,22 @@ class CreateJiraTicketDialog(
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Priority:"), gbc)
+        contentPanel.add(JBLabel("Priority:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
-        mainPanel.add(priorityComboBox, gbc)
+        contentPanel.add(priorityComboBox, gbc)
         row++
 
         // Epic Link
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Epic Link:"), gbc)
+        contentPanel.add(JBLabel("Epic Link:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
-        mainPanel.add(epicComboBox, gbc)
+        contentPanel.add(epicComboBox, gbc)
         row++
 
         // Sprint removed - customfield not available in all projects
@@ -365,11 +354,11 @@ class CreateJiraTicketDialog(
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Sprint:"), gbc)
+        contentPanel.add(JBLabel("Sprint:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
-        mainPanel.add(sprintComboBox, gbc)
+        contentPanel.add(sprintComboBox, gbc)
         row++
         */
 
@@ -377,7 +366,7 @@ class CreateJiraTicketDialog(
         gbc.gridx = 0
         gbc.gridy = row
         gbc.gridwidth = 2
-        mainPanel.add(JSeparator(), gbc)
+        contentPanel.add(JSeparator(), gbc)
         gbc.gridwidth = 1
         row++
 
@@ -385,7 +374,7 @@ class CreateJiraTicketDialog(
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Assignee:"), gbc)
+        contentPanel.add(JBLabel("Assignee:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
@@ -396,25 +385,25 @@ class CreateJiraTicketDialog(
             currentUser?.let { assigneeComboBox.selectedItem = it }
         }
         assigneePanel.add(assignToMeButton, BorderLayout.EAST)
-        mainPanel.add(assigneePanel, gbc)
+        contentPanel.add(assigneePanel, gbc)
         row++
 
         // Reporter
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Reporter:"), gbc)
+        contentPanel.add(JBLabel("Reporter:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
-        mainPanel.add(reporterComboBox, gbc)
+        contentPanel.add(reporterComboBox, gbc)
         row++
 
         // Separator for Labels and Components section
         gbc.gridx = 0
         gbc.gridy = row
         gbc.gridwidth = 2
-        mainPanel.add(JSeparator(), gbc)
+        contentPanel.add(JSeparator(), gbc)
         gbc.gridwidth = 1
         row++
 
@@ -422,29 +411,29 @@ class CreateJiraTicketDialog(
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Labels:"), gbc)
+        contentPanel.add(JBLabel("Labels:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
-        mainPanel.add(labelsComboBox, gbc)
+        contentPanel.add(labelsComboBox, gbc)
         row++
 
         // Components (like Epic)
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Components:"), gbc)
+        contentPanel.add(JBLabel("Components:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
-        mainPanel.add(componentsComboBox, gbc)
+        contentPanel.add(componentsComboBox, gbc)
         row++
 
         // Separator for Time tracking section
         gbc.gridx = 0
         gbc.gridy = row
         gbc.gridwidth = 2
-        mainPanel.add(JSeparator(), gbc)
+        contentPanel.add(JSeparator(), gbc)
         gbc.gridwidth = 1
         row++
 
@@ -452,31 +441,31 @@ class CreateJiraTicketDialog(
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Story Points:"), gbc)
+        contentPanel.add(JBLabel("Story Points:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
         storyPointsField.toolTipText = "Enter story points (e.g., 3, 5, 8)"
-        mainPanel.add(storyPointsField, gbc)
+        contentPanel.add(storyPointsField, gbc)
         row++
 
         // Original Estimate
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Original Estimate:"), gbc)
+        contentPanel.add(JBLabel("Original Estimate:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
         originalEstimateField.toolTipText = "Enter time (e.g., 3h, 2d, 1w)"
-        mainPanel.add(originalEstimateField, gbc)
+        contentPanel.add(originalEstimateField, gbc)
         row++
 
         // Start Date with date picker
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Start Date:"), gbc)
+        contentPanel.add(JBLabel("Start Date:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
@@ -492,14 +481,14 @@ class CreateJiraTicketDialog(
         val startDatePanel = JPanel(BorderLayout(5, 0))
         startDatePanel.add(startDatePicker, BorderLayout.CENTER)
         startDatePanel.add(startCalendarButton, BorderLayout.EAST)
-        mainPanel.add(startDatePanel, gbc)
+        contentPanel.add(startDatePanel, gbc)
         row++
 
         // Due Date with date picker
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        mainPanel.add(JBLabel("Due Date:"), gbc)
+        contentPanel.add(JBLabel("Due Date:"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
@@ -515,16 +504,20 @@ class CreateJiraTicketDialog(
         val dueDatePanel = JPanel(BorderLayout(5, 0))
         dueDatePanel.add(dueDatePicker, BorderLayout.CENTER)
         dueDatePanel.add(dueCalendarButton, BorderLayout.EAST)
-        mainPanel.add(dueDatePanel, gbc)
+        contentPanel.add(dueDatePanel, gbc)
         row++
 
         // Wrap in scroll pane with reasonable size
-        val mainScrollPane = JBScrollPane(mainPanel)
+        val mainScrollPane = JBScrollPane(contentPanel)
         mainScrollPane.preferredSize = Dimension(900, 700)
         mainScrollPane.verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
         mainScrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
 
-        return mainScrollPane
+        // Wrap scroll pane in loading panel for center overlay
+        loadingPanel = com.intellij.ui.components.JBLoadingPanel(BorderLayout(), disposable)
+        loadingPanel.add(mainScrollPane)
+
+        return loadingPanel
     }
 
     private fun loadJiraMetadata() {
@@ -801,11 +794,11 @@ class CreateJiraTicketDialog(
         if (isLoadingLabels) loadingItems.add("Labels")
 
         if (loadingItems.isEmpty()) {
-            loadingLabel.isVisible = false
-            loadingLabel.text = ""
+            loadingPanel.stopLoading()
         } else {
-            loadingLabel.isVisible = true
-            loadingLabel.text = "⏳ Loading: ${loadingItems.joinToString(", ")}"
+            val loadingText = "Loading: ${loadingItems.joinToString(", ")}"
+            loadingPanel.setLoadingText(loadingText)
+            loadingPanel.startLoading()
         }
     }
 
