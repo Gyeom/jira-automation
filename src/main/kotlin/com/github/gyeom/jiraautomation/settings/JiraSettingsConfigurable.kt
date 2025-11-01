@@ -2,6 +2,7 @@ package com.github.gyeom.jiraautomation.settings
 
 import com.github.gyeom.jiraautomation.model.*
 import com.github.gyeom.jiraautomation.services.AIService
+import com.github.gyeom.jiraautomation.services.DiffAnalysisService
 import com.github.gyeom.jiraautomation.services.JiraApiService
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.Configurable
@@ -19,6 +20,7 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
     private val settings = JiraSettingsState.getInstance(project)
     private val jiraApiService = project.service<JiraApiService>()
     private val aiService = project.service<AIService>()
+    private val diffAnalysisService = project.service<DiffAnalysisService>()
 
     // Jira fields
     private val jiraUrlField = JBTextField()
@@ -183,6 +185,9 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
                     button("Validate Template") {
                         validatePromptTemplate()
                     }
+                    button("Preview Template") {
+                        previewPromptTemplate()
+                    }
                 }
 
                 row {
@@ -214,6 +219,120 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
                 "Validation Error"
             )
         }
+    }
+
+    private fun previewPromptTemplate() {
+        val template = promptTemplateArea.text.ifEmpty {
+            AIService.DEFAULT_PROMPT_TEMPLATE
+        }
+
+        // First validate
+        val validationResult = aiService.validatePromptTemplate(template)
+        if (validationResult.isFailure) {
+            com.intellij.openapi.ui.Messages.showErrorDialog(
+                project,
+                "Cannot preview invalid template:\n${validationResult.exceptionOrNull()?.message}",
+                "Preview Error"
+            )
+            return
+        }
+
+        // Get current uncommitted changes
+        val diffResult = diffAnalysisService.analyzeUncommittedChanges()
+
+        if (diffResult == null) {
+            // No changes - use sample data
+            showPreviewDialog(template, useSampleData = true)
+        } else {
+            // Use real data
+            showPreviewDialog(template, useSampleData = false, diffResult = diffResult)
+        }
+    }
+
+    private fun showPreviewDialog(
+        template: String,
+        useSampleData: Boolean,
+        diffResult: DiffAnalysisService.DiffAnalysisResult? = null
+    ) {
+        val (diffSummary, diffContent) = if (useSampleData) {
+            // Sample data
+            val sampleSummary = """
+                ## Code Changes Summary
+
+                - **Files Changed**: 3
+                - **Lines Added**: +45
+                - **Lines Deleted**: -12
+                - **Branch**: feature/sample-feature
+
+                ### Modified Files
+                - `src/services/UserService.kt`
+                - `src/controllers/AuthController.kt`
+                - `src/models/User.kt`
+            """.trimIndent()
+
+            val sampleDiff = """
+                diff --git a/src/services/UserService.kt b/src/services/UserService.kt
+                + fun authenticateUser(username: String, password: String): User? {
+                +     return userRepository.findByUsername(username)?.let { user ->
+                +         if (passwordEncoder.matches(password, user.password)) user else null
+                +     }
+                + }
+            """.trimIndent()
+
+            sampleSummary to sampleDiff
+        } else {
+            // Real data
+            val summary = diffAnalysisService.formatDiffSummary(diffResult!!)
+            val content = diffResult.diffContent.let {
+                if (it.length > 3000) it.substring(0, 3000) + "\n... (truncated)" else it
+            }
+            summary to content
+        }
+
+        // Replace variables
+        val renderedPrompt = template
+            .replace("{{LANGUAGE}}", "Korean")
+            .replace("{{DIFF_SUMMARY}}", diffSummary)
+            .replace("{{DIFF_CONTENT}}", diffContent)
+
+        // Show in dialog
+        val previewDialog = object : com.intellij.openapi.ui.DialogWrapper(project) {
+            init {
+                title = if (useSampleData) "Template Preview (Sample Data)" else "Template Preview (Real Data)"
+                init()
+            }
+
+            override fun createCenterPanel(): JComponent {
+                val textArea = com.intellij.ui.components.JBTextArea()
+                textArea.text = renderedPrompt
+                textArea.isEditable = false
+                textArea.lineWrap = true
+                textArea.wrapStyleWord = true
+
+                val scrollPane = com.intellij.ui.components.JBScrollPane(textArea)
+                scrollPane.preferredSize = java.awt.Dimension(800, 600)
+
+                val panel = javax.swing.JPanel(java.awt.BorderLayout(0, 10))
+
+                // Info label
+                val infoLabel = com.intellij.ui.components.JBLabel(
+                    if (useSampleData)
+                        "Preview with sample data (no uncommitted changes found)"
+                    else
+                        "Preview with your current uncommitted changes"
+                )
+                infoLabel.foreground = java.awt.Color.GRAY
+                panel.add(infoLabel, java.awt.BorderLayout.NORTH)
+
+                panel.add(scrollPane, java.awt.BorderLayout.CENTER)
+
+                return panel
+            }
+
+            override fun createActions() = arrayOf(okAction)
+        }
+
+        previewDialog.show()
     }
 
 
