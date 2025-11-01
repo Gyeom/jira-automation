@@ -20,9 +20,6 @@ class JiraSettingsState : PersistentStateComponent<JiraSettingsState.State> {
         var aiApiKey: String = "",
         var aiModel: String = "claude-3-haiku-20240307",
         var defaultLanguage: String = "ko",
-        var rememberLastLanguage: Boolean = true,
-        var autoDetectLanguage: Boolean = false,
-        var lastUsedLanguage: String = "ko",
 
         // Prompt customization (if empty, uses default template)
         var customPromptTemplate: String = "",

@@ -35,10 +35,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
     // Language - using ComboBox
     private val languageComboBox = ComboBox(OutputLanguage.values())
 
-    // Checkboxes
-    private var rememberLastLanguage = false
-    private var autoDetectLanguage = false
-
     // Prompt customization
     private val promptTemplateArea = com.intellij.ui.components.JBTextArea(25, 80)
 
@@ -147,15 +143,7 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
                 row("Default Language:") {
                     cell(languageComboBox)
                         .columns(15)
-                        .comment("Select default output language")
-                }
-                row {
-                    checkBox("Remember last used language")
-                        .bindSelected(::rememberLastLanguage)
-                }
-                row {
-                    checkBox("Auto-detect from IDE language")
-                        .bindSelected(::autoDetectLanguage)
+                        .comment("Select default output language for ticket generation")
                 }
             }
 
@@ -386,8 +374,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
                 String(aiApiKeyField.password) != state.aiApiKey ||
                 aiModelComboBox.selectedItem != state.aiModel ||
                 selectedLanguage?.code != state.defaultLanguage ||
-                rememberLastLanguage != state.rememberLastLanguage ||
-                autoDetectLanguage != state.autoDetectLanguage ||
                 promptTemplateArea.text != state.customPromptTemplate
     }
 
@@ -405,9 +391,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
         if (selectedLanguage != null) {
             state.defaultLanguage = selectedLanguage.code
         }
-
-        state.rememberLastLanguage = rememberLastLanguage
-        state.autoDetectLanguage = autoDetectLanguage
 
         state.customPromptTemplate = promptTemplateArea.text
     }
@@ -427,9 +410,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
         // Reset language
         val language = OutputLanguage.fromCode(state.defaultLanguage)
         languageComboBox.selectedItem = language
-
-        rememberLastLanguage = state.rememberLastLanguage
-        autoDetectLanguage = state.autoDetectLanguage
 
         promptTemplateArea.text = if (state.customPromptTemplate.isNotEmpty()) {
             state.customPromptTemplate
