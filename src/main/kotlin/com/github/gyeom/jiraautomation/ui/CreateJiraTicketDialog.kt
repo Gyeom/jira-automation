@@ -67,7 +67,6 @@ class CreateJiraTicketDialog(
     private val dueDatePicker = com.intellij.ui.components.fields.ExtendableTextField()
 
     // Subtask fields
-    private val createAsSubtaskCheckbox = JCheckBox("Create as Subtask")
     private val parentIssueField = JBTextField(20)
     private val searchParentButton = JButton("Search")
     private val validateParentButton = JButton("Validate")
@@ -151,10 +150,7 @@ class CreateJiraTicketDialog(
 
             // If parent issue key is provided, auto-configure for subtask creation
             parentIssueKey?.let { parentKey ->
-                createAsSubtaskCheckbox.isSelected = true
                 parentIssueField.text = parentKey
-                // Trigger the checkbox listener to show parent field
-                createAsSubtaskCheckbox.actionListeners.forEach { it.actionPerformed(null) }
                 // Auto-validate the parent issue
                 validateParentIssue()
             }
@@ -288,25 +284,16 @@ class CreateJiraTicketDialog(
         mainPanel.add(issueTypeComboBox, gbc)
         row++
 
-        // Create as Subtask checkbox
-        gbc.gridx = 0
-        gbc.gridy = row
-        gbc.gridwidth = 2
-        gbc.weightx = 1.0
-        mainPanel.add(createAsSubtaskCheckbox, gbc)
-        gbc.gridwidth = 1
-        row++
-
-        // Parent Issue (shown when checkbox is selected)
+        // Parent Issue (optional - for creating subtasks)
         gbc.gridx = 0
         gbc.gridy = row
         gbc.weightx = 0.0
-        val parentLabel = JBLabel("Parent Issue:")
-        mainPanel.add(parentLabel, gbc)
+        mainPanel.add(JBLabel("Parent Issue (optional):"), gbc)
 
         gbc.gridx = 1
         gbc.weightx = 1.0
         val parentPanel = JPanel(BorderLayout(5, 0))
+        parentIssueField.toolTipText = "Enter parent issue key to create as subtask (e.g., PROJECT-123)"
         parentPanel.add(parentIssueField, BorderLayout.CENTER)
         val parentButtonPanel = JPanel()
         parentButtonPanel.layout = BoxLayout(parentButtonPanel, BoxLayout.X_AXIS)
@@ -317,34 +304,6 @@ class CreateJiraTicketDialog(
         mainPanel.add(parentPanel, gbc)
         row++
 
-        // Initially hide parent issue field
-        parentLabel.isVisible = false
-        parentPanel.isVisible = false
-
-        // Setup checkbox listener to show/hide parent issue field
-        createAsSubtaskCheckbox.addActionListener {
-            val isSubtask = createAsSubtaskCheckbox.isSelected
-            parentLabel.isVisible = isSubtask
-            parentPanel.isVisible = isSubtask
-
-            if (isSubtask) {
-                // When creating subtask, try to select Sub-task issue type
-                for (i in 0 until issueTypeComboBox.itemCount) {
-                    val item = issueTypeComboBox.getItemAt(i)
-                    if (item.name.lowercase().contains("sub")) {
-                        issueTypeComboBox.selectedIndex = i
-                        issueTypeComboBox.isEnabled = false // Disable to enforce subtask type
-                        break
-                    }
-                }
-            } else {
-                issueTypeComboBox.isEnabled = true
-                projectKeyComboBox.isEnabled = true  // Re-enable project selection
-                validatedParent = null
-                parentIssueField.text = ""
-            }
-        }
-
         // Setup search button listener
         searchParentButton.addActionListener {
             showParentIssueSearch()
@@ -354,6 +313,22 @@ class CreateJiraTicketDialog(
         validateParentButton.addActionListener {
             validateParentIssue()
         }
+
+        // Add listener to parent field to detect clearing
+        parentIssueField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
+            override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = checkParentField()
+            override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = checkParentField()
+            override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = checkParentField()
+
+            private fun checkParentField() {
+                if (parentIssueField.text.trim().isEmpty()) {
+                    // Reset when parent field is cleared
+                    validatedParent = null
+                    issueTypeComboBox.isEnabled = true
+                    projectKeyComboBox.isEnabled = true
+                }
+            }
+        })
 
         // Priority
         gbc.gridx = 0
@@ -966,6 +941,28 @@ class CreateJiraTicketDialog(
                 result.onSuccess { parent ->
                     validatedParent = parent
 
+                    // Auto-select Sub-task issue type
+                    var subtaskTypeFound = false
+                    for (i in 0 until issueTypeComboBox.itemCount) {
+                        val item = issueTypeComboBox.getItemAt(i)
+                        if (item.name.lowercase().contains("sub")) {
+                            issueTypeComboBox.selectedIndex = i
+                            issueTypeComboBox.isEnabled = false // Lock to subtask type
+                            subtaskTypeFound = true
+                            println("Auto-selected Sub-task issue type: ${item.name}")
+                            break
+                        }
+                    }
+
+                    if (!subtaskTypeFound) {
+                        Messages.showWarningDialog(
+                            project,
+                            "Sub-task issue type not found in this project.\n" +
+                                    "Please ensure the project supports subtasks.",
+                            "Warning"
+                        )
+                    }
+
                     // Auto-fill project from parent
                     val parentProjectItem = (0 until projectKeyComboBox.itemCount)
                         .map { projectKeyComboBox.getItemAt(it) }
@@ -997,11 +994,15 @@ class CreateJiraTicketDialog(
                         "Parent Issue: ${parent.key}\n" +
                                 "Summary: ${parent.summary}\n" +
                                 "Project: ${parent.projectKey}\n" +
-                                "Status: ${parent.status}$epicInfo",
+                                "Status: ${parent.status}$epicInfo\n\n" +
+                                "This will be created as a Subtask.",
                         "Parent Issue Validated"
                     )
                 }.onFailure { error ->
                     validatedParent = null
+                    // Re-enable fields if validation fails
+                    issueTypeComboBox.isEnabled = true
+                    projectKeyComboBox.isEnabled = true
                     Messages.showErrorDialog(
                         project,
                         "Failed to validate parent issue:\n${error.message}",
@@ -1045,13 +1046,12 @@ class CreateJiraTicketDialog(
             return
         }
 
-        // Validate subtask requirements
-        val isSubtask = createAsSubtaskCheckbox.isSelected
-        val parentKey = if (isSubtask) {
+        // Check if creating subtask (parent field is filled)
+        val parentKey = if (parentIssueField.text.trim().isNotEmpty()) {
             if (validatedParent == null) {
                 Messages.showErrorDialog(
                     project,
-                    "Please validate the parent issue before creating a subtask.\nClick the 'Validate' button next to the Parent Issue field.",
+                    "Please validate the parent issue before creating.\nClick the 'Validate' button next to the Parent Issue field.",
                     "Validation Error"
                 )
                 return
