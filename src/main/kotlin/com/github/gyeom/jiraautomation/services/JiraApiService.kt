@@ -1311,7 +1311,8 @@ class JiraApiService(private val project: Project) {
 
             // JQL query to get issues created by current user, ordered by creation date
             val jql = "reporter = currentUser() ORDER BY created DESC"
-            val url = "${state.jiraUrl}/rest/api/3/search?jql=${java.net.URLEncoder.encode(jql, "UTF-8")}&maxResults=$maxResults&fields=key,summary,status,created,issuetype,project,priority"
+            // Use the new API endpoint as /rest/api/3/search is deprecated
+            val url = "${state.jiraUrl}/rest/api/3/search/jql?jql=${java.net.URLEncoder.encode(jql, "UTF-8")}&maxResults=$maxResults&fields=key,summary,status,created,issuetype,project,priority"
 
             val request = Request.Builder()
                 .url(url)
