@@ -137,9 +137,7 @@ class CreateJiraTicketDialog(
         // Set AI provider and model to last used values
         val lastProvider = settings.state.lastUsedAiProvider.takeIf { it.isNotEmpty() } ?: settings.state.aiProvider
         aiProviderComboBox.selectedItem = lastProvider
-        updateAIModels()
-        val lastModel = settings.state.lastUsedAiModel.takeIf { it.isNotEmpty() } ?: settings.state.aiModel
-        aiModelComboBox.selectedItem = lastModel
+        updateAIModels()  // This will handle model selection
 
         // Setup listeners
         projectKeyComboBox.addActionListener { loadIssueTypesForProject() }
@@ -756,40 +754,50 @@ class CreateJiraTicketDialog(
     private fun updateAIModels() {
         val provider = aiProviderComboBox.selectedItem as? String ?: return
 
+        // First, load fallback models immediately (synchronous)
         aiModelComboBox.removeAllItems()
-        aiModelComboBox.addItem("Loading models...")
-        aiModelComboBox.isEnabled = false
+        val fallbackModels = aiService.getFallbackModels(provider)
+        fallbackModels.forEach { aiModelComboBox.addItem(it) }
 
-        // Fetch models from API in background
+        // Select the last used or default model
+        val lastModel = settings.state.lastUsedAiModel.takeIf { it.isNotEmpty() }
+            ?: settings.state.aiModel
+        if (fallbackModels.contains(lastModel)) {
+            aiModelComboBox.selectedItem = lastModel
+        } else if (fallbackModels.isNotEmpty()) {
+            aiModelComboBox.selectedIndex = 0
+        }
+
+        // Then, try to fetch latest models from API in background (asynchronous)
         Thread {
             val apiKey = settings.state.aiApiKey
+            if (apiKey.isEmpty()) {
+                println("No API key - using fallback models")
+                return@Thread
+            }
+
             val result = when (provider.lowercase()) {
-                "openai" -> if (apiKey.isNotEmpty()) aiService.fetchOpenAIModels(apiKey) else null
-                "anthropic" -> if (apiKey.isNotEmpty()) aiService.fetchAnthropicModels(apiKey) else null
+                "openai" -> aiService.fetchOpenAIModels(apiKey)
+                "anthropic" -> aiService.fetchAnthropicModels(apiKey)
                 else -> null
             }
 
-            val models = result?.getOrNull() ?: aiService.getFallbackModels(provider)
+            result?.onSuccess { apiModels ->
+                SwingUtilities.invokeLater {
+                    val currentSelection = aiModelComboBox.selectedItem as? String
 
-            SwingUtilities.invokeLater {
-                aiModelComboBox.removeAllItems()
+                    aiModelComboBox.removeAllItems()
+                    apiModels.forEach { aiModelComboBox.addItem(it) }
 
-                if (models.isEmpty()) {
-                    aiModelComboBox.addItem("No models available")
-                } else {
-                    models.forEach { aiModelComboBox.addItem(it) }
-
-                    // Select the last used or default model
-                    val lastModel = settings.state.lastUsedAiModel.takeIf { it.isNotEmpty() }
-                        ?: settings.state.aiModel
-                    if (models.contains(lastModel)) {
-                        aiModelComboBox.selectedItem = lastModel
-                    } else if (models.isNotEmpty()) {
+                    // Restore selection or select first
+                    if (currentSelection != null && apiModels.contains(currentSelection)) {
+                        aiModelComboBox.selectedItem = currentSelection
+                    } else if (apiModels.isNotEmpty()) {
                         aiModelComboBox.selectedIndex = 0
                     }
-                }
 
-                aiModelComboBox.isEnabled = true
+                    println("Updated model list from API: ${apiModels.size} models")
+                }
             }
         }.start()
     }
