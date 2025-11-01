@@ -250,6 +250,16 @@ class JiraToolWindowFactory : ToolWindowFactory {
             )
             itemPanel.maximumSize = Dimension(Int.MAX_VALUE, 100)
 
+            // Add right-click context menu
+            val popupMenu = javax.swing.JPopupMenu()
+            val createSubtaskItem = javax.swing.JMenuItem("Create Subtask for ${ticket.key}")
+            createSubtaskItem.addActionListener {
+                createSubtaskForIssue(ticket.key)
+            }
+            popupMenu.add(createSubtaskItem)
+
+            itemPanel.componentPopupMenu = popupMenu
+
             val gbc = GridBagConstraints()
             gbc.fill = GridBagConstraints.HORIZONTAL
             gbc.anchor = GridBagConstraints.WEST
@@ -341,6 +351,29 @@ class JiraToolWindowFactory : ToolWindowFactory {
             val dialogResult = dialog.showAndGet()
 
             // Refresh both panels if dialog was successful (to show newly created ticket from API)
+            if (dialogResult) {
+                refreshCreatedTicketsPanel()
+                refreshAssignedTicketsPanel()
+            }
+        }
+
+        private fun createSubtaskForIssue(parentIssueKey: String) {
+            val diffResult = diffAnalysisService.analyzeUncommittedChanges()
+
+            if (diffResult == null) {
+                Messages.showWarningDialog(
+                    project,
+                    "No uncommitted changes found.\n\nPlease make some code changes before creating a subtask.",
+                    "No Changes"
+                )
+                return
+            }
+
+            // Open dialog with parent issue pre-filled
+            val dialog = CreateJiraTicketDialog(project, diffResult, parentIssueKey)
+            val dialogResult = dialog.showAndGet()
+
+            // Refresh both panels if dialog was successful
             if (dialogResult) {
                 refreshCreatedTicketsPanel()
                 refreshAssignedTicketsPanel()

@@ -29,7 +29,8 @@ import javax.swing.*
 
 class CreateJiraTicketDialog(
     private val project: Project,
-    private val diffResult: DiffAnalysisService.DiffAnalysisResult
+    private val diffResult: DiffAnalysisService.DiffAnalysisResult,
+    private val parentIssueKey: String? = null  // Optional parent issue key for creating subtasks
 ) : DialogWrapper(project) {
 
     private val settings = JiraSettingsState.getInstance(project)
@@ -68,6 +69,7 @@ class CreateJiraTicketDialog(
     // Subtask fields
     private val createAsSubtaskCheckbox = JCheckBox("Create as Subtask")
     private val parentIssueField = JBTextField(20)
+    private val searchParentButton = JButton("Search")
     private val validateParentButton = JButton("Validate")
     private var validatedParent: ParentIssue? = null
 
@@ -146,6 +148,16 @@ class CreateJiraTicketDialog(
         SwingUtilities.invokeLater {
             loadCurrentUserThenMetadata()
             generateTicket()
+
+            // If parent issue key is provided, auto-configure for subtask creation
+            parentIssueKey?.let { parentKey ->
+                createAsSubtaskCheckbox.isSelected = true
+                parentIssueField.text = parentKey
+                // Trigger the checkbox listener to show parent field
+                createAsSubtaskCheckbox.actionListeners.forEach { it.actionPerformed(null) }
+                // Auto-validate the parent issue
+                validateParentIssue()
+            }
         }
     }
 
@@ -296,7 +308,12 @@ class CreateJiraTicketDialog(
         gbc.weightx = 1.0
         val parentPanel = JPanel(BorderLayout(5, 0))
         parentPanel.add(parentIssueField, BorderLayout.CENTER)
-        parentPanel.add(validateParentButton, BorderLayout.EAST)
+        val parentButtonPanel = JPanel()
+        parentButtonPanel.layout = BoxLayout(parentButtonPanel, BoxLayout.X_AXIS)
+        parentButtonPanel.add(searchParentButton)
+        parentButtonPanel.add(Box.createHorizontalStrut(5))
+        parentButtonPanel.add(validateParentButton)
+        parentPanel.add(parentButtonPanel, BorderLayout.EAST)
         mainPanel.add(parentPanel, gbc)
         row++
 
@@ -326,6 +343,11 @@ class CreateJiraTicketDialog(
                 validatedParent = null
                 parentIssueField.text = ""
             }
+        }
+
+        // Setup search button listener
+        searchParentButton.addActionListener {
+            showParentIssueSearch()
         }
 
         // Setup validate button listener
@@ -811,6 +833,118 @@ class CreateJiraTicketDialog(
         }.start()
     }
 
+    private fun showParentIssueSearch() {
+        val searchQuery = parentIssueField.text.trim().ifEmpty { "" }
+
+        val searchDialog = object : DialogWrapper(project) {
+            private val searchField = JBTextField(30)
+            private val resultsList = JBList<ParentIssue>()
+            private var searchResults = listOf<ParentIssue>()
+
+            init {
+                title = "Search Parent Issue"
+                init()
+
+                searchField.text = searchQuery
+
+                // Setup search on text change
+                val searchTimer = Timer(500) { performSearch() }
+                searchTimer.isRepeats = false
+
+                searchField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
+                    override fun insertUpdate(e: javax.swing.event.DocumentEvent?) {
+                        searchTimer.restart()
+                    }
+                    override fun removeUpdate(e: javax.swing.event.DocumentEvent?) {
+                        searchTimer.restart()
+                    }
+                    override fun changedUpdate(e: javax.swing.event.DocumentEvent?) {
+                        searchTimer.restart()
+                    }
+                })
+
+                // Setup list renderer
+                resultsList.cellRenderer = object : DefaultListCellRenderer() {
+                    override fun getListCellRendererComponent(
+                        list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean
+                    ): Component {
+                        super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                        if (value is ParentIssue) {
+                            text = "${value.key} - ${value.summary} [${value.status}]"
+                        }
+                        return this
+                    }
+                }
+
+                // Double-click to select
+                resultsList.addMouseListener(object : java.awt.event.MouseAdapter() {
+                    override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                        if (e?.clickCount == 2) {
+                            doOKAction()
+                        }
+                    }
+                })
+
+                // Initial search if there's text
+                if (searchQuery.isNotEmpty()) {
+                    performSearch()
+                }
+            }
+
+            override fun createCenterPanel(): JComponent {
+                val panel = JPanel(BorderLayout(0, 10))
+
+                // Search field
+                val searchPanel = JPanel(BorderLayout(5, 0))
+                searchPanel.add(JBLabel("Search:"), BorderLayout.WEST)
+                searchPanel.add(searchField, BorderLayout.CENTER)
+                panel.add(searchPanel, BorderLayout.NORTH)
+
+                // Results list
+                val scrollPane = JBScrollPane(resultsList)
+                scrollPane.preferredSize = Dimension(600, 400)
+                panel.add(scrollPane, BorderLayout.CENTER)
+
+                return panel
+            }
+
+            private fun performSearch() {
+                val query = searchField.text.trim()
+                if (query.length < 2) {
+                    resultsList.setListData(emptyArray())
+                    return
+                }
+
+                Thread {
+                    val selectedProject = projectKeyComboBox.selectedItem as? ProjectItem
+                    val result = jiraApiService.searchIssues(query, selectedProject?.key, 20)
+
+                    SwingUtilities.invokeLater {
+                        result.onSuccess { issues ->
+                            searchResults = issues
+                            resultsList.setListData(issues.toTypedArray())
+                        }.onFailure { error ->
+                            println("Search failed: ${error.message}")
+                            resultsList.setListData(emptyArray())
+                        }
+                    }
+                }.start()
+            }
+
+            override fun doOKAction() {
+                val selected = resultsList.selectedValue
+                if (selected != null) {
+                    parentIssueField.text = selected.key
+                    super.doOKAction()
+                    // Auto-validate after selection
+                    validateParentIssue()
+                }
+            }
+        }
+
+        searchDialog.show()
+    }
+
     private fun validateParentIssue() {
         val parentKey = parentIssueField.text.trim()
 
@@ -842,12 +976,28 @@ class CreateJiraTicketDialog(
                         projectKeyComboBox.isEnabled = false // Lock project to parent's project
                     }
 
+                    // Auto-inherit Epic from parent if available
+                    parent.epicKey?.let { parentEpicKey ->
+                        println("Auto-inheriting Epic from parent: $parentEpicKey")
+                        // Find and select the epic in combo box
+                        for (i in 0 until epicComboBox.itemCount) {
+                            val epic = epicComboBox.getItemAt(i)
+                            if (epic?.key == parentEpicKey) {
+                                epicComboBox.selectedIndex = i
+                                println("Epic auto-selected: ${epic.key}")
+                                break
+                            }
+                        }
+                    }
+
+                    val epicInfo = parent.epicKey?.let { "\nEpic: $it" } ?: ""
+
                     Messages.showInfoMessage(
                         project,
                         "Parent Issue: ${parent.key}\n" +
                                 "Summary: ${parent.summary}\n" +
                                 "Project: ${parent.projectKey}\n" +
-                                "Status: ${parent.status}",
+                                "Status: ${parent.status}$epicInfo",
                         "Parent Issue Validated"
                     )
                 }.onFailure { error ->

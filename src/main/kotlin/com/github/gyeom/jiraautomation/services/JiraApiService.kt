@@ -1465,6 +1465,89 @@ class JiraApiService(private val project: Project) {
     }
 
     /**
+     * Search for issues by text (summary or key)
+     * @param query Search query
+     * @param projectKey Optional project key to limit search
+     * @param maxResults Maximum number of results
+     * @return Result containing list of matching issues
+     */
+    fun searchIssues(query: String, projectKey: String? = null, maxResults: Int = 20): Result<List<ParentIssue>> {
+        val state = settings.state
+
+        if (query.isBlank() || query.length < 2) {
+            return Result.success(emptyList())
+        }
+
+        try {
+            // Build JQL query - search in summary or exact key match
+            val jql = if (projectKey != null) {
+                "project = $projectKey AND (summary ~ \"$query*\" OR key = \"$query\") ORDER BY updated DESC"
+            } else {
+                "(summary ~ \"$query*\" OR key = \"$query\") ORDER BY updated DESC"
+            }
+
+            val url = "${state.jiraUrl}/rest/api/3/search/jql?jql=${java.net.URLEncoder.encode(jql, "UTF-8")}&maxResults=$maxResults&fields=id,key,summary,project,issuetype,status"
+
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", Credentials.basic(state.jiraUsername, state.jiraApiToken))
+                .header("Accept", "application/json")
+                .get()
+                .build()
+
+            println("Searching issues with query: $query")
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string() ?: ""
+
+            if (response.isSuccessful) {
+                val jsonResponse = gson.fromJson(responseBody, Map::class.java) as Map<*, *>
+                val issues = (jsonResponse["issues"] as? List<Map<String, Any>>) ?: emptyList()
+
+                val results = issues.mapNotNull { issue ->
+                    try {
+                        val key = issue["key"] as? String ?: return@mapNotNull null
+                        val id = issue["id"] as? String ?: return@mapNotNull null
+                        val fields = issue["fields"] as? Map<String, Any> ?: return@mapNotNull null
+                        val summary = fields["summary"] as? String ?: ""
+
+                        val project = fields["project"] as? Map<String, Any>
+                        val projectKeyValue = project?.get("key") as? String ?: ""
+
+                        val issueType = fields["issuetype"] as? Map<String, Any>
+                        val issueTypeName = issueType?.get("name") as? String ?: ""
+
+                        val status = fields["status"] as? Map<String, Any>
+                        val statusName = status?.get("name") as? String ?: ""
+
+                        ParentIssue(
+                            key = key,
+                            id = id,
+                            summary = summary,
+                            projectKey = projectKeyValue,
+                            issueType = issueTypeName,
+                            status = statusName
+                        )
+                    } catch (e: Exception) {
+                        println("Error parsing search result: ${e.message}")
+                        null
+                    }
+                }
+
+                println("Found ${results.size} matching issues")
+                return Result.success(results)
+            } else {
+                println("Failed to search issues: ${response.code} - $responseBody")
+                return Result.failure(Exception("Failed to search issues: ${response.code}"))
+            }
+        } catch (e: Exception) {
+            println("Error searching issues: ${e.message}")
+            e.printStackTrace()
+            return Result.failure(e)
+        }
+    }
+
+    /**
      * Validate and get parent issue details
      * @param parentKey The parent issue key (e.g., "PROJECT-123")
      * @return Result containing ParentIssue details
@@ -1477,7 +1560,8 @@ class JiraApiService(private val project: Project) {
         }
 
         try {
-            val url = "${state.jiraUrl}/rest/api/3/issue/$parentKey?fields=id,key,summary,project,issuetype,status"
+            // Include Epic Link field in query
+            val url = "${state.jiraUrl}/rest/api/3/issue/$parentKey?fields=id,key,summary,project,issuetype,status,customfield_10014"
 
             val request = Request.Builder()
                 .url(url)
@@ -1508,16 +1592,20 @@ class JiraApiService(private val project: Project) {
                 val status = fields["status"] as? Map<String, Any>
                 val statusName = status?.get("name") as? String ?: ""
 
+                // Get Epic Link if exists
+                val epicKey = fields["customfield_10014"] as? String
+
                 val parentIssue = ParentIssue(
                     key = key,
                     id = id,
                     summary = summary,
                     projectKey = projectKey,
                     issueType = issueTypeName,
-                    status = statusName
+                    status = statusName,
+                    epicKey = epicKey
                 )
 
-                println("Parent issue validated: $key - $summary (Project: $projectKey)")
+                println("Parent issue validated: $key - $summary (Project: $projectKey, Epic: ${epicKey ?: "None"})")
                 return Result.success(parentIssue)
             } else if (response.code == 404) {
                 println("Parent issue not found: $parentKey")

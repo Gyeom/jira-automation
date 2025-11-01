@@ -166,5 +166,6 @@ data class ParentIssue(
     val summary: String,
     val projectKey: String,
     val issueType: String,
-    val status: String
+    val status: String,
+    val epicKey: String? = null  // Epic Link from parent
 )
