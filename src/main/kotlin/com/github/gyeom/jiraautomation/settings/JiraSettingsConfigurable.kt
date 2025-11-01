@@ -38,8 +38,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
     // Checkboxes
     private var rememberLastLanguage = false
     private var autoDetectLanguage = false
-    private var includeDiffInDescription = true
-    private var linkToCommit = true
 
     // Prompt customization
     private val promptTemplateArea = com.intellij.ui.components.JBTextArea(25, 80)
@@ -158,17 +156,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
                 row {
                     checkBox("Auto-detect from IDE language")
                         .bindSelected(::autoDetectLanguage)
-                }
-            }
-
-            group("Template Settings") {
-                row {
-                    checkBox("Include diff details in description")
-                        .bindSelected(::includeDiffInDescription)
-                }
-                row {
-                    checkBox("Link to commit/branch")
-                        .bindSelected(::linkToCommit)
                 }
             }
 
@@ -401,8 +388,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
                 selectedLanguage?.code != state.defaultLanguage ||
                 rememberLastLanguage != state.rememberLastLanguage ||
                 autoDetectLanguage != state.autoDetectLanguage ||
-                includeDiffInDescription != state.includeDiffInDescription ||
-                linkToCommit != state.linkToCommit ||
                 promptTemplateArea.text != state.customPromptTemplate
     }
 
@@ -423,8 +408,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
 
         state.rememberLastLanguage = rememberLastLanguage
         state.autoDetectLanguage = autoDetectLanguage
-        state.includeDiffInDescription = includeDiffInDescription
-        state.linkToCommit = linkToCommit
 
         state.customPromptTemplate = promptTemplateArea.text
     }
@@ -447,8 +430,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
 
         rememberLastLanguage = state.rememberLastLanguage
         autoDetectLanguage = state.autoDetectLanguage
-        includeDiffInDescription = state.includeDiffInDescription
-        linkToCommit = state.linkToCommit
 
         promptTemplateArea.text = if (state.customPromptTemplate.isNotEmpty()) {
             state.customPromptTemplate

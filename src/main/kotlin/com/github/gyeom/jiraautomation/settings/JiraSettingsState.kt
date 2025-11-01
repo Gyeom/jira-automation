@@ -23,8 +23,6 @@ class JiraSettingsState : PersistentStateComponent<JiraSettingsState.State> {
         var rememberLastLanguage: Boolean = true,
         var autoDetectLanguage: Boolean = false,
         var lastUsedLanguage: String = "ko",
-        var includeDiffInDescription: Boolean = true,
-        var linkToCommit: Boolean = true,
 
         // Prompt customization (if empty, uses default template)
         var customPromptTemplate: String = "",
