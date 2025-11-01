@@ -66,6 +66,9 @@ class CreateJiraTicketDialog(
     private val startDatePicker = com.intellij.ui.components.fields.ExtendableTextField()
     private val dueDatePicker = com.intellij.ui.components.fields.ExtendableTextField()
 
+    // Project search
+    private val searchProjectButton = JButton("Search")
+
     // Subtask fields
     private val parentIssueField = JBTextField(20)
     private val searchParentButton = JButton("Search")
@@ -258,8 +261,16 @@ class CreateJiraTicketDialog(
 
         gbc.gridx = 1
         gbc.weightx = 1.0
-        contentPanel.add(projectKeyComboBox, gbc)
+        val projectPanel = JPanel(BorderLayout(5, 0))
+        projectPanel.add(projectKeyComboBox, BorderLayout.CENTER)
+        projectPanel.add(searchProjectButton, BorderLayout.EAST)
+        contentPanel.add(projectPanel, gbc)
         row++
+
+        // Setup project search button
+        searchProjectButton.addActionListener {
+            showProjectSearch()
+        }
 
         // Issue Type
         gbc.gridx = 0
@@ -854,6 +865,102 @@ class CreateJiraTicketDialog(
                 }
             }
         }.start()
+    }
+
+    private fun showProjectSearch() {
+        val currentProject = projectKeyComboBox.selectedItem as? ProjectItem
+
+        val searchDialog = object : DialogWrapper(project) {
+            private val searchField = JBTextField(30)
+            private val resultsList = JBList<ProjectItem>()
+            private var allProjects = listOf<ProjectItem>()
+
+            init {
+                title = "Search Project"
+                init()
+
+                // Get all projects from combo box
+                allProjects = (0 until projectKeyComboBox.itemCount)
+                    .map { projectKeyComboBox.getItemAt(it) }
+
+                // Setup search on text change
+                searchField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
+                    override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = filterProjects()
+                    override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = filterProjects()
+                    override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = filterProjects()
+                })
+
+                // Setup list renderer
+                resultsList.cellRenderer = object : DefaultListCellRenderer() {
+                    override fun getListCellRendererComponent(
+                        list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean
+                    ): Component {
+                        super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                        if (value is ProjectItem) {
+                            text = "${value.key} - ${value.name}"
+                        }
+                        return this
+                    }
+                }
+
+                // Double-click to select
+                resultsList.addMouseListener(object : java.awt.event.MouseAdapter() {
+                    override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                        if (e?.clickCount == 2) {
+                            doOKAction()
+                        }
+                    }
+                })
+
+                // Initial load - show all projects
+                resultsList.setListData(allProjects.toTypedArray())
+            }
+
+            override fun createCenterPanel(): JComponent {
+                val panel = JPanel(BorderLayout(0, 10))
+
+                // Search field
+                val searchPanel = JPanel(BorderLayout(5, 0))
+                searchPanel.add(JBLabel("Search by key or name:"), BorderLayout.WEST)
+                searchPanel.add(searchField, BorderLayout.CENTER)
+                panel.add(searchPanel, BorderLayout.NORTH)
+
+                // Results list
+                val scrollPane = JBScrollPane(resultsList)
+                scrollPane.preferredSize = Dimension(600, 400)
+                panel.add(scrollPane, BorderLayout.CENTER)
+
+                // Info label
+                val infoLabel = JBLabel("${allProjects.size} projects available")
+                infoLabel.foreground = java.awt.Color.GRAY
+                panel.add(infoLabel, BorderLayout.SOUTH)
+
+                return panel
+            }
+
+            private fun filterProjects() {
+                val query = searchField.text.trim().lowercase()
+                if (query.isEmpty()) {
+                    resultsList.setListData(allProjects.toTypedArray())
+                } else {
+                    val filtered = allProjects.filter { project ->
+                        project.key.lowercase().contains(query) ||
+                                project.name.lowercase().contains(query)
+                    }
+                    resultsList.setListData(filtered.toTypedArray())
+                }
+            }
+
+            override fun doOKAction() {
+                val selected = resultsList.selectedValue
+                if (selected != null) {
+                    projectKeyComboBox.selectedItem = selected
+                    super.doOKAction()
+                }
+            }
+        }
+
+        searchDialog.show()
     }
 
     private fun showParentIssueSearch() {
