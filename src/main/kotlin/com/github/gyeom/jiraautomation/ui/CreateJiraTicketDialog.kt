@@ -87,6 +87,8 @@ class CreateJiraTicketDialog(
     // Store all loaded data for filtering
     private var allSprints = listOf<Sprint>()
     private var allComponents = listOf<JiraComponent>()
+    private var regularIssueTypes = listOf<IssueTypeItem>()
+    private var subtaskIssueTypes = listOf<IssueTypeItem>()
 
     // Data classes for ComboBox items
     data class ProjectItem(val key: String, val name: String) {
@@ -321,11 +323,20 @@ class CreateJiraTicketDialog(
             override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = checkParentField()
 
             private fun checkParentField() {
-                if (parentIssueField.text.trim().isEmpty()) {
+                if (parentIssueField.text.trim().isEmpty() && validatedParent != null) {
                     // Reset when parent field is cleared
                     validatedParent = null
+
+                    // Restore regular issue types
+                    issueTypeComboBox.removeAllItems()
+                    regularIssueTypes.forEach { issueType ->
+                        issueTypeComboBox.addItem(issueType)
+                    }
+
                     issueTypeComboBox.isEnabled = true
                     projectKeyComboBox.isEnabled = true
+
+                    println("Parent cleared - restored to regular issue types")
                 }
             }
         })
@@ -648,9 +659,22 @@ class CreateJiraTicketDialog(
                 SwingUtilities.invokeLater {
                     issueTypeComboBox.removeAllItems()
 
-                    // Filter out subtask types and add to combo box
-                    issueTypes.filter { !it.subtask }.forEach { issueType ->
-                        issueTypeComboBox.addItem(IssueTypeItem(issueType.id, issueType.name))
+                    // Separate regular and subtask types
+                    val regularTypes = issueTypes.filter { !it.subtask }
+                    val subtaskTypes = issueTypes.filter { it.subtask }
+
+                    // Store both types for later use
+                    regularIssueTypes = regularTypes.map { IssueTypeItem(it.id, it.name) }
+                    subtaskIssueTypes = subtaskTypes.map { IssueTypeItem(it.id, it.name) }
+
+                    // Add regular types to combo box (subtasks added when parent is validated)
+                    regularIssueTypes.forEach { issueType ->
+                        issueTypeComboBox.addItem(issueType)
+                    }
+
+                    println("Loaded ${regularTypes.size} regular issue types and ${subtaskTypes.size} subtask types")
+                    if (subtaskTypes.isNotEmpty()) {
+                        println("Subtask types available: ${subtaskTypes.map { it.name }.joinToString(", ")}")
                     }
 
                     // Select last used issue type if exists, otherwise use default
@@ -941,26 +965,29 @@ class CreateJiraTicketDialog(
                 result.onSuccess { parent ->
                     validatedParent = parent
 
-                    // Auto-select Sub-task issue type
-                    var subtaskTypeFound = false
-                    for (i in 0 until issueTypeComboBox.itemCount) {
-                        val item = issueTypeComboBox.getItemAt(i)
-                        if (item.name.lowercase().contains("sub")) {
-                            issueTypeComboBox.selectedIndex = i
-                            issueTypeComboBox.isEnabled = false // Lock to subtask type
-                            subtaskTypeFound = true
-                            println("Auto-selected Sub-task issue type: ${item.name}")
-                            break
-                        }
-                    }
+                    // Clear and reload issue type combo with subtask types
+                    issueTypeComboBox.removeAllItems()
 
-                    if (!subtaskTypeFound) {
-                        Messages.showWarningDialog(
+                    // Add subtask types
+                    if (subtaskIssueTypes.isNotEmpty()) {
+                        subtaskIssueTypes.forEach { subtaskType ->
+                            issueTypeComboBox.addItem(subtaskType)
+                        }
+                        issueTypeComboBox.selectedIndex = 0 // Select first subtask type
+                        issueTypeComboBox.isEnabled = false // Lock to subtask type
+                        println("Auto-selected Sub-task issue type: ${subtaskIssueTypes[0].name}")
+                    } else {
+                        // No subtask types found - show error
+                        Messages.showErrorDialog(
                             project,
-                            "Sub-task issue type not found in this project.\n" +
-                                    "Please ensure the project supports subtasks.",
-                            "Warning"
+                            "Sub-task issue type not found in project '${parent.projectKey}'.\n\n" +
+                                    "This project may not support subtasks.\n" +
+                                    "Please check your Jira project configuration.",
+                            "Subtask Not Supported"
                         )
+                        validatedParent = null
+                        parentIssueField.text = ""
+                        return@invokeLater
                     }
 
                     // Auto-fill project from parent
