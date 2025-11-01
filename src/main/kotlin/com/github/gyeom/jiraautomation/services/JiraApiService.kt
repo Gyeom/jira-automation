@@ -31,6 +31,7 @@ class JiraApiService(private val project: Project) {
         priority: String? = null,
         assigneeAccountId: String? = null,
         reporterAccountId: String? = null,
+        parentKey: String? = null,
         epicKey: String? = null,
         sprintId: Long? = null,
         labels: List<String> = emptyList(),
@@ -64,7 +65,7 @@ class JiraApiService(private val project: Project) {
 
         val descriptionContent = convertMarkdownToJiraFormat(description)
 
-        // Build fields with optional priority, assignee, reporter, and epic
+        // Build fields with optional priority, assignee, reporter, parent, and epic
         val fields = JiraIssueFields(
             project = JiraProject(key = projectKeyToUse),
             summary = title,
@@ -81,6 +82,10 @@ class JiraApiService(private val project: Project) {
             priority = priority?.let {
                 println("Setting priority with ID: $it")
                 JiraPriority(id = it)
+            },
+            parent = parentKey?.let {
+                println("Setting parent issue: $it")
+                ParentIssueRef(key = it)
             },
             customfield_10014 = epicKey?.let {
                 println("Setting epic link: $it")
@@ -1454,6 +1459,75 @@ class JiraApiService(private val project: Project) {
             }
         } catch (e: Exception) {
             println("Error fetching recent issues: ${e.message}")
+            e.printStackTrace()
+            return Result.failure(e)
+        }
+    }
+
+    /**
+     * Validate and get parent issue details
+     * @param parentKey The parent issue key (e.g., "PROJECT-123")
+     * @return Result containing ParentIssue details
+     */
+    fun validateParentIssue(parentKey: String): Result<ParentIssue> {
+        val state = settings.state
+
+        if (parentKey.isBlank()) {
+            return Result.failure(Exception("Parent issue key cannot be empty"))
+        }
+
+        try {
+            val url = "${state.jiraUrl}/rest/api/3/issue/$parentKey?fields=id,key,summary,project,issuetype,status"
+
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", Credentials.basic(state.jiraUsername, state.jiraApiToken))
+                .header("Accept", "application/json")
+                .get()
+                .build()
+
+            println("Validating parent issue: $parentKey")
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string() ?: ""
+
+            if (response.isSuccessful) {
+                val jsonResponse = gson.fromJson(responseBody, Map::class.java) as Map<*, *>
+                val key = jsonResponse["key"] as? String ?: return Result.failure(Exception("Invalid issue key"))
+                val id = jsonResponse["id"] as? String ?: return Result.failure(Exception("Invalid issue id"))
+
+                val fields = jsonResponse["fields"] as? Map<String, Any> ?: return Result.failure(Exception("Invalid fields"))
+                val summary = fields["summary"] as? String ?: ""
+
+                val project = fields["project"] as? Map<String, Any>
+                val projectKey = project?.get("key") as? String ?: ""
+
+                val issueType = fields["issuetype"] as? Map<String, Any>
+                val issueTypeName = issueType?.get("name") as? String ?: ""
+
+                val status = fields["status"] as? Map<String, Any>
+                val statusName = status?.get("name") as? String ?: ""
+
+                val parentIssue = ParentIssue(
+                    key = key,
+                    id = id,
+                    summary = summary,
+                    projectKey = projectKey,
+                    issueType = issueTypeName,
+                    status = statusName
+                )
+
+                println("Parent issue validated: $key - $summary (Project: $projectKey)")
+                return Result.success(parentIssue)
+            } else if (response.code == 404) {
+                println("Parent issue not found: $parentKey")
+                return Result.failure(Exception("Issue '$parentKey' not found"))
+            } else {
+                println("Failed to validate parent issue: ${response.code} - $responseBody")
+                return Result.failure(Exception("Failed to validate parent issue: ${response.code}"))
+            }
+        } catch (e: Exception) {
+            println("Error validating parent issue: ${e.message}")
             e.printStackTrace()
             return Result.failure(e)
         }

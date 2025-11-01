@@ -14,6 +14,7 @@ data class JiraIssueFields(
     val assignee: JiraAssignee? = null,
     val reporter: JiraReporter? = null,
     val priority: JiraPriority? = null,
+    val parent: ParentIssueRef? = null,      // Parent issue for subtasks
     val customfield_10014: String? = null,  // Epic Link field (customfield ID may vary)
     val customfield_10020: Long? = null,     // Sprint field (customfield ID may vary)
     val labels: List<String>? = null,        // Labels
@@ -151,4 +152,19 @@ data class RecentIssue(
     val projectName: String,
     val url: String,
     val priority: String? = null
+)
+
+// Parent issue reference for creating subtasks
+data class ParentIssueRef(
+    val key: String
+)
+
+// Parent issue details for validation
+data class ParentIssue(
+    val key: String,
+    val id: String,
+    val summary: String,
+    val projectKey: String,
+    val issueType: String,
+    val status: String
 )
