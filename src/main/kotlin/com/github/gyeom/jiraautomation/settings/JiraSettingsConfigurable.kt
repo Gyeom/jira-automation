@@ -40,7 +40,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
     private var linkToCommit = true
 
     // Prompt customization
-    private var useCustomPrompt = false
     private val promptTemplateArea = com.intellij.ui.components.JBTextArea(25, 80)
 
     init {
@@ -173,14 +172,8 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
 
             group("Prompt Template") {
                 row {
-                    checkBox("Use custom prompt template")
-                        .bindSelected(::useCustomPrompt)
-                        .comment("Enable to customize the AI prompt for ticket generation")
-                }
-
-                row {
                     scrollCell(promptTemplateArea)
-                        .comment("Customize the AI prompt template. Use variables: {{LANGUAGE}}, {{DIFF_SUMMARY}}, {{DIFF_CONTENT}}")
+                        .comment("Customize the AI prompt template. Leave empty to use default. Use variables: {{LANGUAGE}}, {{DIFF_SUMMARY}}, {{DIFF_CONTENT}}")
                 }.resizableRow()
 
                 row {
@@ -291,7 +284,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
                 autoDetectLanguage != state.autoDetectLanguage ||
                 includeDiffInDescription != state.includeDiffInDescription ||
                 linkToCommit != state.linkToCommit ||
-                useCustomPrompt != state.useCustomPrompt ||
                 promptTemplateArea.text != state.customPromptTemplate
     }
 
@@ -315,7 +307,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
         state.includeDiffInDescription = includeDiffInDescription
         state.linkToCommit = linkToCommit
 
-        state.useCustomPrompt = useCustomPrompt
         state.customPromptTemplate = promptTemplateArea.text
     }
 
@@ -340,7 +331,6 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
         includeDiffInDescription = state.includeDiffInDescription
         linkToCommit = state.linkToCommit
 
-        useCustomPrompt = state.useCustomPrompt
         promptTemplateArea.text = if (state.customPromptTemplate.isNotEmpty()) {
             state.customPromptTemplate
         } else {

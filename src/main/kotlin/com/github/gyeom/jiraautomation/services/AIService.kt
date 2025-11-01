@@ -184,10 +184,8 @@ Important:
             diffContent
         }
 
-        // Use custom template if enabled, otherwise use default
-        val template = if (settings.state.useCustomPrompt && settings.state.customPromptTemplate.isNotEmpty()) {
-            settings.state.customPromptTemplate
-        } else {
+        // Use custom template if not empty, otherwise use default
+        val template = settings.state.customPromptTemplate.ifEmpty {
             DEFAULT_PROMPT_TEMPLATE
         }
 
