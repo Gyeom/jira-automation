@@ -14,7 +14,9 @@ data class Epic(
     val summary: String,
     val done: Boolean = false,
     val color: EpicColor? = null
-)
+) {
+    override fun toString(): String = "$key - $name"
+}
 
 /**
  * Epic 색상 정보
