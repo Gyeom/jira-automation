@@ -35,9 +35,9 @@ Detailed Changes:
 Please generate:
 1. A concise Jira ticket title (max 100 characters, in {{LANGUAGE}})
    - Should clearly describe what was changed
-   - Format: [Category] Brief description
-   - Example (Korean): [기능] 사용자 인증 로직 구현
-   - Example (English): [Feature] Implement user authentication
+   - Format: Brief description
+   - Example (Korean): 사용자 인증 로직 구현
+   - Example (English): Implement user authentication
 
 2. A detailed description (in {{LANGUAGE}}) with the following sections:
    - **What was changed**: Specific changes made to the code
