@@ -26,6 +26,7 @@ import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
+import javax.swing.JTabbedPane
 import javax.swing.SwingConstants
 
 class JiraToolWindowFactory : ToolWindowFactory {
@@ -42,7 +43,8 @@ class JiraToolWindowFactory : ToolWindowFactory {
 
         private val diffAnalysisService = project.service<DiffAnalysisService>()
         private val jiraApiService = project.service<JiraApiService>()
-        private var historyPanel: JBPanel<*>? = null
+        private var createdTicketsPanel: JBPanel<*>? = null
+        private var assignedTicketsPanel: JBPanel<*>? = null
 
         fun getContent(): JBPanel<*> {
             val mainPanel = JBPanel<JBPanel<*>>(BorderLayout())
@@ -64,9 +66,18 @@ class JiraToolWindowFactory : ToolWindowFactory {
 
             mainPanel.add(topPanel, BorderLayout.NORTH)
 
-            // Recent tickets section
-            val historyScrollPanel = createHistoryPanel()
-            mainPanel.add(historyScrollPanel, BorderLayout.CENTER)
+            // Tabbed pane for different ticket views
+            val tabbedPane = JTabbedPane()
+
+            // Tab 1: Assigned to me
+            val assignedScrollPanel = createAssignedTicketsPanel()
+            tabbedPane.addTab("Assigned to Me", assignedScrollPanel)
+
+            // Tab 2: Created by me
+            val createdScrollPanel = createCreatedTicketsPanel()
+            tabbedPane.addTab("Created by Me", createdScrollPanel)
+
+            mainPanel.add(tabbedPane, BorderLayout.CENTER)
 
             // Bottom section with settings button
             val bottomPanel = JBPanel<JBPanel<*>>(FlowLayout(FlowLayout.CENTER, 10, 10))
@@ -81,21 +92,21 @@ class JiraToolWindowFactory : ToolWindowFactory {
             return mainPanel
         }
 
-        private fun createHistoryPanel(): JBScrollPane {
+        private fun createAssignedTicketsPanel(): JBScrollPane {
             val panel = JBPanel<JBPanel<*>>()
             panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
             panel.border = BorderFactory.createEmptyBorder(10, 15, 10, 15)
-            historyPanel = panel
+            assignedTicketsPanel = panel
 
             // Title and Refresh button
             val titlePanel = JBPanel<JBPanel<*>>(BorderLayout())
-            val historyTitle = JBLabel("Recent Tickets (from Jira)")
-            historyTitle.font = historyTitle.font.deriveFont(Font.BOLD, 14f)
-            titlePanel.add(historyTitle, BorderLayout.WEST)
+            val title = JBLabel("My Assigned Tickets")
+            title.font = title.font.deriveFont(Font.BOLD, 14f)
+            titlePanel.add(title, BorderLayout.WEST)
 
             val refreshButton = JButton("Refresh")
             refreshButton.addActionListener {
-                refreshHistoryPanel()
+                refreshAssignedTicketsPanel()
             }
             titlePanel.add(refreshButton, BorderLayout.EAST)
 
@@ -103,22 +114,97 @@ class JiraToolWindowFactory : ToolWindowFactory {
             panel.add(Box.createVerticalStrut(10))
 
             // Load and display tickets
-            refreshHistoryPanel()
+            refreshAssignedTicketsPanel()
 
             val scrollPane = JBScrollPane(panel)
             scrollPane.border = null
             return scrollPane
         }
 
-        private fun refreshHistoryPanel() {
-            historyPanel?.let { panel ->
+        private fun createCreatedTicketsPanel(): JBScrollPane {
+            val panel = JBPanel<JBPanel<*>>()
+            panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
+            panel.border = BorderFactory.createEmptyBorder(10, 15, 10, 15)
+            createdTicketsPanel = panel
+
+            // Title and Refresh button
+            val titlePanel = JBPanel<JBPanel<*>>(BorderLayout())
+            val title = JBLabel("My Created Tickets")
+            title.font = title.font.deriveFont(Font.BOLD, 14f)
+            titlePanel.add(title, BorderLayout.WEST)
+
+            val refreshButton = JButton("Refresh")
+            refreshButton.addActionListener {
+                refreshCreatedTicketsPanel()
+            }
+            titlePanel.add(refreshButton, BorderLayout.EAST)
+
+            panel.add(titlePanel)
+            panel.add(Box.createVerticalStrut(10))
+
+            // Load and display tickets
+            refreshCreatedTicketsPanel()
+
+            val scrollPane = JBScrollPane(panel)
+            scrollPane.border = null
+            return scrollPane
+        }
+
+        private fun refreshAssignedTicketsPanel() {
+            assignedTicketsPanel?.let { panel ->
                 // Remove all except title panel (first 2 components)
                 while (panel.componentCount > 2) {
                     panel.remove(2)
                 }
 
                 // Show loading message
-                val loadingLabel = JBLabel("Loading recent tickets...")
+                val loadingLabel = JBLabel("Loading assigned tickets...")
+                loadingLabel.foreground = java.awt.Color.GRAY
+                panel.add(loadingLabel)
+                panel.revalidate()
+                panel.repaint()
+
+                // Load tickets from Jira API in background thread
+                Thread {
+                    val result = jiraApiService.getRecentAssignedIssues(10)
+
+                    javax.swing.SwingUtilities.invokeLater {
+                        // Remove loading message
+                        panel.remove(loadingLabel)
+
+                        result.onSuccess { recentTickets ->
+                            if (recentTickets.isEmpty()) {
+                                val emptyLabel = JBLabel("No assigned tickets found")
+                                emptyLabel.foreground = java.awt.Color.GRAY
+                                panel.add(emptyLabel)
+                            } else {
+                                recentTickets.forEach { ticket ->
+                                    panel.add(createTicketItem(ticket))
+                                    panel.add(Box.createVerticalStrut(8))
+                                }
+                            }
+                        }.onFailure { error ->
+                            val errorLabel = JBLabel("Failed to load tickets: ${error.message}")
+                            errorLabel.foreground = java.awt.Color.RED
+                            panel.add(errorLabel)
+                        }
+
+                        panel.revalidate()
+                        panel.repaint()
+                    }
+                }.start()
+            }
+        }
+
+        private fun refreshCreatedTicketsPanel() {
+            createdTicketsPanel?.let { panel ->
+                // Remove all except title panel (first 2 components)
+                while (panel.componentCount > 2) {
+                    panel.remove(2)
+                }
+
+                // Show loading message
+                val loadingLabel = JBLabel("Loading created tickets...")
                 loadingLabel.foreground = java.awt.Color.GRAY
                 panel.add(loadingLabel)
                 panel.revalidate()
@@ -134,7 +220,7 @@ class JiraToolWindowFactory : ToolWindowFactory {
 
                         result.onSuccess { recentTickets ->
                             if (recentTickets.isEmpty()) {
-                                val emptyLabel = JBLabel("No tickets found")
+                                val emptyLabel = JBLabel("No created tickets found")
                                 emptyLabel.foreground = java.awt.Color.GRAY
                                 panel.add(emptyLabel)
                             } else {
@@ -254,9 +340,10 @@ class JiraToolWindowFactory : ToolWindowFactory {
             val dialog = CreateJiraTicketDialog(project, diffResult)
             val dialogResult = dialog.showAndGet()
 
-            // Refresh history if dialog was successful (to show newly created ticket from API)
+            // Refresh both panels if dialog was successful (to show newly created ticket from API)
             if (dialogResult) {
-                refreshHistoryPanel()
+                refreshCreatedTicketsPanel()
+                refreshAssignedTicketsPanel()
             }
         }
     }
