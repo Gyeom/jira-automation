@@ -27,8 +27,6 @@ class JiraSettingsState : PersistentStateComponent<JiraSettingsState.State> {
         var linkToCommit: Boolean = true,
 
         // Last used values for ticket creation dialog
-        var lastUsedAiProvider: String = "anthropic",
-        var lastUsedAiModel: String = "claude-3-haiku-20240307",
         var lastUsedProjectKey: String = "",
         var lastUsedIssueType: String = "",
         var lastUsedPriorityId: String = "",

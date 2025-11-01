@@ -72,11 +72,6 @@ class CreateJiraTicketDialog(
     private val validateParentButton = JButton("Validate")
     private var validatedParent: ParentIssue? = null
 
-
-    // AI Provider selection
-    private val aiProviderComboBox = ComboBox(arrayOf("openai", "anthropic"))
-    private val aiModelComboBox = ComboBox<String>()
-
     private var isGenerating = false
     private var isLoadingMetadata = false
     private var currentUser: JiraUser? = null
@@ -134,14 +129,8 @@ class CreateJiraTicketDialog(
         val defaultLang = OutputLanguage.fromCode(settings.state.defaultLanguage)
         languageComboBox.selectedItem = defaultLang
 
-        // Set AI provider and model to last used values
-        val lastProvider = settings.state.lastUsedAiProvider.takeIf { it.isNotEmpty() } ?: settings.state.aiProvider
-        aiProviderComboBox.selectedItem = lastProvider
-        updateAIModels()  // This will handle model selection
-
         // Setup listeners
         projectKeyComboBox.addActionListener { loadIssueTypesForProject() }
-        aiProviderComboBox.addActionListener { updateAIModels() }
 
         // Load current user first, then load other metadata
         SwingUtilities.invokeLater {
@@ -204,21 +193,6 @@ class CreateJiraTicketDialog(
         languagePanel.add(regenerateButton, BorderLayout.EAST)
 
         mainPanel.add(languagePanel, gbc)
-        row++
-
-        // AI Provider selection
-        gbc.gridx = 0
-        gbc.gridy = row
-        gbc.weightx = 0.0
-        mainPanel.add(JBLabel("AI Provider:"), gbc)
-
-        gbc.gridx = 1
-        gbc.weightx = 1.0
-        val aiPanel = JPanel(BorderLayout(5, 0))
-        aiPanel.add(aiProviderComboBox, BorderLayout.WEST)
-        aiPanel.add(JBLabel(" Model: "), BorderLayout.CENTER)
-        aiPanel.add(aiModelComboBox, BorderLayout.EAST)
-        mainPanel.add(aiPanel, gbc)
         row++
 
         // Title
@@ -751,57 +725,6 @@ class CreateJiraTicketDialog(
         }.start()
     }
 
-    private fun updateAIModels() {
-        val provider = aiProviderComboBox.selectedItem as? String ?: return
-
-        // First, load fallback models immediately (synchronous)
-        aiModelComboBox.removeAllItems()
-        val fallbackModels = aiService.getFallbackModels(provider)
-        fallbackModels.forEach { aiModelComboBox.addItem(it) }
-
-        // Select the last used or default model
-        val lastModel = settings.state.lastUsedAiModel.takeIf { it.isNotEmpty() }
-            ?: settings.state.aiModel
-        if (fallbackModels.contains(lastModel)) {
-            aiModelComboBox.selectedItem = lastModel
-        } else if (fallbackModels.isNotEmpty()) {
-            aiModelComboBox.selectedIndex = 0
-        }
-
-        // Then, try to fetch latest models from API in background (asynchronous)
-        Thread {
-            val apiKey = settings.state.aiApiKey
-            if (apiKey.isEmpty()) {
-                println("No API key - using fallback models")
-                return@Thread
-            }
-
-            val result = when (provider.lowercase()) {
-                "openai" -> aiService.fetchOpenAIModels(apiKey)
-                "anthropic" -> aiService.fetchAnthropicModels(apiKey)
-                else -> null
-            }
-
-            result?.onSuccess { apiModels ->
-                SwingUtilities.invokeLater {
-                    val currentSelection = aiModelComboBox.selectedItem as? String
-
-                    aiModelComboBox.removeAllItems()
-                    apiModels.forEach { aiModelComboBox.addItem(it) }
-
-                    // Restore selection or select first
-                    if (currentSelection != null && apiModels.contains(currentSelection)) {
-                        aiModelComboBox.selectedItem = currentSelection
-                    } else if (apiModels.isNotEmpty()) {
-                        aiModelComboBox.selectedIndex = 0
-                    }
-
-                    println("Updated model list from API: ${apiModels.size} models")
-                }
-            }
-        }.start()
-    }
-
     private fun generateTicket() {
         if (isGenerating) return
 
@@ -814,15 +737,9 @@ class CreateJiraTicketDialog(
         Thread {
             try {
                 val language = languageComboBox.selectedItem as OutputLanguage
-                val provider = aiProviderComboBox.selectedItem as? String ?: settings.state.aiProvider
-                val model = aiModelComboBox.selectedItem as? String ?: settings.state.aiModel
 
-                // Temporarily override AI settings for this generation
-                val originalProvider = settings.state.aiProvider
-                val originalModel = settings.state.aiModel
-
-                settings.state.aiProvider = provider
-                settings.state.aiModel = model
+                // Use AI provider and model from settings
+                println("Generating ticket with AI: ${settings.state.aiProvider} / ${settings.state.aiModel}")
 
                 val diffSummary = diffAnalysisService.formatDiffSummary(diffResult)
                 val result = aiService.generateTicketFromDiff(
@@ -830,10 +747,6 @@ class CreateJiraTicketDialog(
                     diffResult.diffContent,
                     language
                 )
-
-                // Restore original settings
-                settings.state.aiProvider = originalProvider
-                settings.state.aiModel = originalModel
 
                 SwingUtilities.invokeLater {
                     result.onSuccess { ticket ->
@@ -1195,8 +1108,6 @@ class CreateJiraTicketDialog(
             )
 
             // Save last used values for next time
-            settings.state.lastUsedAiProvider = aiProviderComboBox.selectedItem as? String ?: ""
-            settings.state.lastUsedAiModel = aiModelComboBox.selectedItem as? String ?: ""
             settings.state.lastUsedProjectKey = projectKey
             settings.state.lastUsedIssueType = issueType
             settings.state.lastUsedPriorityId = priority ?: ""
