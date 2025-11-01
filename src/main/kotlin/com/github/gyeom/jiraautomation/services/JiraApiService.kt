@@ -87,9 +87,15 @@ class JiraApiService(private val project: Project) {
                 println("Setting parent issue: $it")
                 ParentIssueRef(key = it)
             },
-            customfield_10014 = epicKey?.let {
-                println("Setting epic link: $it")
-                it
+            // Epic Link: Only set if NOT creating a subtask (subtasks inherit epic from parent)
+            customfield_10014 = if (parentKey == null) {
+                epicKey?.let {
+                    println("Setting epic link: $it")
+                    it
+                }
+            } else {
+                println("Skipping epic link - subtasks inherit from parent")
+                null
             },
             customfield_10020 = sprintId?.let {
                 println("Setting sprint: $it")
