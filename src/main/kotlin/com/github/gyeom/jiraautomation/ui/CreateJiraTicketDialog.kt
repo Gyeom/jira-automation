@@ -79,6 +79,19 @@ class CreateJiraTicketDialog(
     private val reporterSearchTimer = Timer(300) { searchUsers(false) }
     private var isSearchingUsers = false
 
+    // Loading state tracking
+    private var isLoadingProjects = false
+    private var isLoadingIssueTypes = false
+    private var isLoadingPriorities = false
+    private var isLoadingEpics = false
+    private var isLoadingUsers = false
+    private var isLoadingComponents = false
+    private var isLoadingLabels = false
+
+    // Loading indicator UI
+    private val loadingLabel = JBLabel()
+    private val loadingProgressBar = com.intellij.ui.components.JBLoadingPanel(BorderLayout(), project)
+
     // Store all loaded data for filtering
     private var allSprints = listOf<Sprint>()
     private var allComponents = listOf<JiraComponent>()
@@ -176,6 +189,18 @@ class CreateJiraTicketDialog(
         gbc.insets = Insets(5, 5, 5, 5)
 
         var row = 0
+
+        // Loading indicator at the top
+        gbc.gridx = 0
+        gbc.gridy = row
+        gbc.gridwidth = 2
+        gbc.weightx = 1.0
+        loadingLabel.text = "Loading metadata..."
+        loadingLabel.foreground = java.awt.Color.GRAY
+        loadingLabel.isVisible = false
+        mainPanel.add(loadingLabel, gbc)
+        gbc.gridwidth = 1
+        row++
 
         // Language selection
         gbc.gridx = 0
@@ -505,6 +530,8 @@ class CreateJiraTicketDialog(
     private fun loadJiraMetadata() {
         if (isLoadingMetadata) return
         isLoadingMetadata = true
+        isLoadingProjects = true
+        SwingUtilities.invokeLater { updateLoadingIndicator() }
 
         Thread {
             try {
@@ -526,11 +553,17 @@ class CreateJiraTicketDialog(
                             projectKeyComboBox.selectedItem = projectToSelect
                         }
 
+                        isLoadingProjects = false
+                        updateLoadingIndicator()
+
                         // Load issue types for selected project
                         loadIssueTypesForProject()
                     }
                 }.onFailure { error ->
                     SwingUtilities.invokeLater {
+                        isLoadingProjects = false
+                        updateLoadingIndicator()
+
                         // Fall back to manual entry with last used or default value
                         val fallbackKey = settings.state.lastUsedProjectKey.takeIf { it.isNotEmpty() }
                             ?: settings.state.defaultProjectKey
@@ -561,6 +594,13 @@ class CreateJiraTicketDialog(
     private fun loadIssueTypesForProject() {
         val selectedProject = projectKeyComboBox.selectedItem as? ProjectItem ?: return
 
+        // Set loading states
+        isLoadingComponents = true
+        isLoadingLabels = true
+        isLoadingIssueTypes = true
+        isLoadingPriorities = true
+        SwingUtilities.invokeLater { updateLoadingIndicator() }
+
         Thread {
             // Load components for the project
             println("Loading components for project: ${selectedProject.key}")
@@ -586,6 +626,9 @@ class CreateJiraTicketDialog(
                     } else {
                         componentsComboBox.selectedIndex = 0
                     }
+
+                    isLoadingComponents = false
+                    updateLoadingIndicator()
                 }
             }.onFailure { error ->
                 println("ERROR: Failed to load components: ${error.message}")
@@ -593,6 +636,9 @@ class CreateJiraTicketDialog(
                     allComponents = emptyList()
                     componentsComboBox.removeAllItems()
                     componentsComboBox.addItem(null)
+
+                    isLoadingComponents = false
+                    updateLoadingIndicator()
                 }
             }
 
@@ -615,6 +661,9 @@ class CreateJiraTicketDialog(
                         labelsComboBox.selectedIndex = 0
                     }
                     println("Loaded ${labels.size} labels for project ${selectedProject.key}")
+
+                    isLoadingLabels = false
+                    updateLoadingIndicator()
                 }
             }.onFailure { error ->
                 println("Failed to load labels: ${error.message}")
@@ -622,6 +671,9 @@ class CreateJiraTicketDialog(
                     availableLabels.clear()
                     labelsComboBox.removeAllItems()
                     labelsComboBox.addItem(null)
+
+                    isLoadingLabels = false
+                    updateLoadingIndicator()
                 }
             }
 
@@ -672,6 +724,9 @@ class CreateJiraTicketDialog(
                     if (subtaskTypes.isNotEmpty()) {
                         println("Subtask types available: ${subtaskTypes.map { it.name }.joinToString(", ")}")
                     }
+
+                    isLoadingIssueTypes = false
+                    updateLoadingIndicator()
                 }
             }.onFailure { error ->
                 SwingUtilities.invokeLater {
@@ -681,6 +736,9 @@ class CreateJiraTicketDialog(
                         issueTypeComboBox.addItem(IssueTypeItem(it, it))
                     }
                     println("Failed to load issue types: ${error.message}")
+
+                    isLoadingIssueTypes = false
+                    updateLoadingIndicator()
                 }
             }
 
@@ -704,6 +762,9 @@ class CreateJiraTicketDialog(
                             }
                         }
                     }
+
+                    isLoadingPriorities = false
+                    updateLoadingIndicator()
                 }
             }.onFailure { error ->
                 SwingUtilities.invokeLater {
@@ -711,6 +772,9 @@ class CreateJiraTicketDialog(
                     priorityComboBox.removeAllItems()
                     priorityComboBox.addItem(PriorityItem("", "(No Priority)"))
                     println("Failed to load project priorities: ${error.message}")
+
+                    isLoadingPriorities = false
+                    updateLoadingIndicator()
                 }
             }
 
@@ -723,6 +787,26 @@ class CreateJiraTicketDialog(
             // Sprint removed - customfield not available in all projects
             // loadSprints()
         }.start()
+    }
+
+    private fun updateLoadingIndicator() {
+        val loadingItems = mutableListOf<String>()
+
+        if (isLoadingProjects) loadingItems.add("Projects")
+        if (isLoadingIssueTypes) loadingItems.add("Issue Types")
+        if (isLoadingPriorities) loadingItems.add("Priorities")
+        if (isLoadingEpics) loadingItems.add("Epics")
+        if (isLoadingUsers) loadingItems.add("Users")
+        if (isLoadingComponents) loadingItems.add("Components")
+        if (isLoadingLabels) loadingItems.add("Labels")
+
+        if (loadingItems.isEmpty()) {
+            loadingLabel.isVisible = false
+            loadingLabel.text = ""
+        } else {
+            loadingLabel.isVisible = true
+            loadingLabel.text = "⏳ Loading: ${loadingItems.joinToString(", ")}"
+        }
     }
 
     private fun generateTicket() {
@@ -1367,6 +1451,9 @@ class CreateJiraTicketDialog(
     private fun loadAssignableUsers() {
         val selectedProject = projectKeyComboBox.selectedItem as? ProjectItem ?: return
 
+        isLoadingUsers = true
+        SwingUtilities.invokeLater { updateLoadingIndicator() }
+
         Thread {
             val result = jiraApiService.getAssignableUsers(selectedProject.key)
             result.onSuccess { users ->
@@ -1408,6 +1495,9 @@ class CreateJiraTicketDialog(
                         }
 
                     println("Final assignee selection: ${assigneeComboBox.selectedItem?.let { (it as JiraUser).displayName }}")
+
+                    isLoadingUsers = false
+                    updateLoadingIndicator()
                 }
             }
         }.start()
@@ -1436,6 +1526,9 @@ class CreateJiraTicketDialog(
     private fun loadEpics() {
         val selectedProject = projectKeyComboBox.selectedItem as? ProjectItem ?: return
 
+        isLoadingEpics = true
+        SwingUtilities.invokeLater { updateLoadingIndicator() }
+
         Thread {
             val result = jiraApiService.getEpics(selectedProject.key)
             result.onSuccess { epics ->
@@ -1458,12 +1551,18 @@ class CreateJiraTicketDialog(
                     } else {
                         epicComboBox.selectedIndex = 0  // Select "(No Epic)" by default
                     }
+
+                    isLoadingEpics = false
+                    updateLoadingIndicator()
                 }
             }.onFailure { error ->
                 SwingUtilities.invokeLater {
                     epicComboBox.removeAllItems()
                     epicComboBox.addItem(null) // Just "(No Epic)" option
                     println("Note: Epic loading not available for this project (${error.message})")
+
+                    isLoadingEpics = false
+                    updateLoadingIndicator()
                 }
             }
         }.start()
