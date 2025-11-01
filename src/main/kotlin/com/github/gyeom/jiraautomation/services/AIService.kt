@@ -25,6 +25,36 @@ class AIService(private val project: Project) {
     private val settings = JiraSettingsState.getInstance(project)
 
     companion object {
+        const val DEFAULT_TEXT_PROMPT_TEMPLATE = """Convert the following text into a structured Jira ticket in {{LANGUAGE}}.
+
+Input Text:
+{{INPUT_TEXT}}
+
+Please analyze the text and generate:
+1. A clear and concise title (max 100 characters, in {{LANGUAGE}})
+   - Should capture the main objective or problem
+   - Example (Korean): 사용자 프로필 사진 업로드 기능 구현
+   - Example (English): Implement user profile photo upload
+
+2. A well-structured description (in {{LANGUAGE}}) with:
+   - Main objective or problem statement
+   - Key requirements or details mentioned
+   - Action items (if any)
+   - Acceptance criteria (if mentioned)
+
+Format your response EXACTLY as JSON:
+{
+  "title": "your title here",
+  "description": "## Objective\n...\n\n## Requirements\n...\n\n## Details\n..."
+}
+
+Important:
+- Use {{LANGUAGE}} for all output text
+- Keep the title under 100 characters
+- Structure the description with clear sections
+- Include all relevant details from the input text
+- Use markdown formatting"""
+
         const val DEFAULT_PROMPT_TEMPLATE = """Given the following code changes, generate a Jira ticket in {{LANGUAGE}}.
 
 {{DIFF_SUMMARY}}
@@ -76,13 +106,40 @@ Important:
         }
     }
 
+    fun generateTicketFromText(
+        inputText: String,
+        language: OutputLanguage
+    ): Result<GeneratedTicket> {
+        val state = settings.state
+
+        if (state.aiApiKey.isEmpty()) {
+            return Result.failure(Exception("AI API key not configured. Please configure in Settings → Tools → Jira Ticket Creator"))
+        }
+
+        if (inputText.isBlank()) {
+            return Result.failure(Exception("Input text cannot be empty"))
+        }
+
+        val prompt = buildTextPrompt(inputText, language)
+
+        return when (state.aiProvider.lowercase()) {
+            "openai" -> generateWithOpenAIPrompt(prompt)
+            "anthropic" -> generateWithAnthropicPrompt(prompt)
+            else -> Result.failure(Exception("Unsupported AI provider: ${state.aiProvider}"))
+        }
+    }
+
     private fun generateWithOpenAI(
         diffSummary: String,
         diffContent: String,
         language: OutputLanguage
     ): Result<GeneratedTicket> {
-        val state = settings.state
         val prompt = buildPrompt(diffSummary, diffContent, language)
+        return generateWithOpenAIPrompt(prompt)
+    }
+
+    private fun generateWithOpenAIPrompt(prompt: String): Result<GeneratedTicket> {
+        val state = settings.state
 
         val requestJson = JsonObject().apply {
             addProperty("model", state.aiModel)
@@ -130,8 +187,12 @@ Important:
         diffContent: String,
         language: OutputLanguage
     ): Result<GeneratedTicket> {
-        val state = settings.state
         val prompt = buildPrompt(diffSummary, diffContent, language)
+        return generateWithAnthropicPrompt(prompt)
+    }
+
+    private fun generateWithAnthropicPrompt(prompt: String): Result<GeneratedTicket> {
+        val state = settings.state
 
         val requestJson = JsonObject().apply {
             addProperty("model", state.aiModel)
@@ -194,6 +255,19 @@ Important:
             .replace("{{LANGUAGE}}", language.displayName)
             .replace("{{DIFF_SUMMARY}}", diffSummary)
             .replace("{{DIFF_CONTENT}}", truncatedDiff)
+    }
+
+    private fun buildTextPrompt(
+        inputText: String,
+        language: OutputLanguage
+    ): String {
+        // Use text template (could be customizable in future)
+        val template = DEFAULT_TEXT_PROMPT_TEMPLATE
+
+        // Replace template variables
+        return template
+            .replace("{{LANGUAGE}}", language.displayName)
+            .replace("{{INPUT_TEXT}}", inputText)
     }
 
     /**

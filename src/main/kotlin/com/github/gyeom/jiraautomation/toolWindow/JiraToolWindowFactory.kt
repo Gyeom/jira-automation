@@ -1,9 +1,11 @@
 package com.github.gyeom.jiraautomation.toolWindow
 
 import com.github.gyeom.jiraautomation.model.RecentIssue
+import com.github.gyeom.jiraautomation.services.AIService
 import com.github.gyeom.jiraautomation.services.DiffAnalysisService
 import com.github.gyeom.jiraautomation.services.JiraApiService
 import com.github.gyeom.jiraautomation.ui.CreateJiraTicketDialog
+import com.github.gyeom.jiraautomation.ui.QuickTextInputDialog
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
@@ -43,6 +45,7 @@ class JiraToolWindowFactory : ToolWindowFactory {
 
         private val diffAnalysisService = project.service<DiffAnalysisService>()
         private val jiraApiService = project.service<JiraApiService>()
+        private val aiService = project.service<AIService>()
         private var createdTicketsPanel: JBPanel<*>? = null
         private var assignedTicketsPanel: JBPanel<*>? = null
 
@@ -57,11 +60,16 @@ class JiraToolWindowFactory : ToolWindowFactory {
             titleLabel.font = titleLabel.font.deriveFont(Font.BOLD, 16f)
             topPanel.add(titleLabel, BorderLayout.NORTH)
 
-            // Create button
-            val createButton = JButton("Create Ticket from Uncommitted Changes")
-            createButton.addActionListener { createTicketFromChanges() }
-            val buttonPanel = JBPanel<JBPanel<*>>(FlowLayout(FlowLayout.LEFT, 0, 10))
-            buttonPanel.add(createButton)
+            // Create buttons
+            val createFromCodeButton = JButton("Create from Code Changes")
+            createFromCodeButton.addActionListener { createTicketFromChanges() }
+
+            val createFromTextButton = JButton("Create Jira Ticket")
+            createFromTextButton.addActionListener { createTicketFromText() }
+
+            val buttonPanel = JBPanel<JBPanel<*>>(FlowLayout(FlowLayout.LEFT, 5, 10))
+            buttonPanel.add(createFromCodeButton)
+            buttonPanel.add(createFromTextButton)
             topPanel.add(buttonPanel, BorderLayout.CENTER)
 
             mainPanel.add(topPanel, BorderLayout.NORTH)
@@ -377,6 +385,58 @@ class JiraToolWindowFactory : ToolWindowFactory {
             if (dialogResult) {
                 refreshCreatedTicketsPanel()
                 refreshAssignedTicketsPanel()
+            }
+        }
+
+        private fun createTicketFromText() {
+            // Show text input dialog
+            val inputDialog = QuickTextInputDialog(project)
+            if (!inputDialog.showAndGet()) {
+                return
+            }
+
+            val inputText = inputDialog.getInputText()
+            if (inputText.isBlank()) {
+                Messages.showWarningDialog(
+                    project,
+                    "Please enter some text to generate a ticket.",
+                    "No Input"
+                )
+                return
+            }
+
+            val language = inputDialog.getLanguage()
+
+            // Generate ticket with AI
+            val result = aiService.generateTicketFromText(inputText, language)
+
+            result.onSuccess { ticket ->
+                // Create a dummy diff result for the dialog
+                val emptyDiffResult = DiffAnalysisService.DiffAnalysisResult(
+                    filesChanged = 0,
+                    linesAdded = 0,
+                    linesDeleted = 0,
+                    fileList = emptyList(),
+                    diffContent = inputText,
+                    branchName = null,
+                    commits = emptyList()
+                )
+
+                // Open create dialog with pre-filled content
+                val dialog = CreateJiraTicketDialog(project, emptyDiffResult)
+                val dialogResult = dialog.showAndGet()
+
+                // Refresh panels if successful
+                if (dialogResult) {
+                    refreshCreatedTicketsPanel()
+                    refreshAssignedTicketsPanel()
+                }
+            }.onFailure { error ->
+                Messages.showErrorDialog(
+                    project,
+                    "Failed to generate ticket from text:\n${error.message}",
+                    "AI Generation Error"
+                )
             }
         }
     }
