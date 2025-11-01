@@ -139,3 +139,16 @@ data class AIProviderInfo(
     val provider: String,
     val models: List<String>
 )
+
+// Recent issue model for displaying in Tool Window
+data class RecentIssue(
+    val key: String,
+    val summary: String,
+    val status: String,
+    val created: String,
+    val issueType: String,
+    val projectKey: String,
+    val projectName: String,
+    val url: String,
+    val priority: String? = null
+)

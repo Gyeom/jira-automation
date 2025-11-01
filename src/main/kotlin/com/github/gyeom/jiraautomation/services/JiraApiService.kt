@@ -1290,4 +1290,92 @@ class JiraApiService(private val project: Project) {
             Result.failure(e)
         }
     }
+
+    /**
+     * Get recent issues created by the current user
+     * @param maxResults Maximum number of issues to return (default 10)
+     * @return Result containing list of recent issues
+     */
+    fun getRecentCreatedIssues(maxResults: Int = 10): Result<List<RecentIssue>> {
+        val state = settings.state
+
+        try {
+            // Get current user first
+            val currentUserResult = getCurrentUser()
+            if (currentUserResult.isFailure) {
+                return Result.failure(currentUserResult.exceptionOrNull() ?: Exception("Failed to get current user"))
+            }
+
+            val currentUser = currentUserResult.getOrNull()
+            val userEmail = currentUser?.emailAddress
+
+            // JQL query to get issues created by current user, ordered by creation date
+            val jql = "reporter = currentUser() ORDER BY created DESC"
+            val url = "${state.jiraUrl}/rest/api/3/search?jql=${java.net.URLEncoder.encode(jql, "UTF-8")}&maxResults=$maxResults&fields=key,summary,status,created,issuetype,project,priority"
+
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", Credentials.basic(state.jiraUsername, state.jiraApiToken))
+                .header("Accept", "application/json")
+                .get()
+                .build()
+
+            println("Fetching recent issues for current user: $userEmail")
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string() ?: ""
+
+            if (response.isSuccessful) {
+                val jsonResponse = gson.fromJson(responseBody, Map::class.java) as Map<*, *>
+                val issues = (jsonResponse["issues"] as? List<Map<String, Any>>) ?: emptyList()
+
+                val recentIssues = issues.mapNotNull { issue ->
+                    try {
+                        val key = issue["key"] as? String ?: return@mapNotNull null
+                        val fields = issue["fields"] as? Map<String, Any> ?: return@mapNotNull null
+                        val summary = fields["summary"] as? String ?: ""
+                        val created = fields["created"] as? String ?: ""
+
+                        val status = fields["status"] as? Map<String, Any>
+                        val statusName = status?.get("name") as? String ?: "Unknown"
+
+                        val issueType = fields["issuetype"] as? Map<String, Any>
+                        val issueTypeName = issueType?.get("name") as? String ?: "Task"
+
+                        val project = fields["project"] as? Map<String, Any>
+                        val projectKey = project?.get("key") as? String ?: ""
+                        val projectName = project?.get("name") as? String ?: ""
+
+                        val priority = fields["priority"] as? Map<String, Any>
+                        val priorityName = priority?.get("name") as? String
+
+                        RecentIssue(
+                            key = key,
+                            summary = summary,
+                            status = statusName,
+                            created = created,
+                            issueType = issueTypeName,
+                            projectKey = projectKey,
+                            projectName = projectName,
+                            url = "${state.jiraUrl}/browse/$key",
+                            priority = priorityName
+                        )
+                    } catch (e: Exception) {
+                        println("Error parsing issue: ${e.message}")
+                        null
+                    }
+                }
+
+                println("Successfully fetched ${recentIssues.size} recent issues")
+                return Result.success(recentIssues)
+            } else {
+                println("Failed to fetch recent issues: ${response.code} - $responseBody")
+                return Result.failure(Exception("Failed to fetch recent issues: ${response.code}"))
+            }
+        } catch (e: Exception) {
+            println("Error fetching recent issues: ${e.message}")
+            e.printStackTrace()
+            return Result.failure(e)
+        }
+    }
 }

@@ -1,9 +1,8 @@
 package com.github.gyeom.jiraautomation.toolWindow
 
-import com.github.gyeom.jiraautomation.model.TicketHistory
+import com.github.gyeom.jiraautomation.model.RecentIssue
 import com.github.gyeom.jiraautomation.services.DiffAnalysisService
 import com.github.gyeom.jiraautomation.services.JiraApiService
-import com.github.gyeom.jiraautomation.services.TicketHistoryService
 import com.github.gyeom.jiraautomation.ui.CreateJiraTicketDialog
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.components.service
@@ -23,7 +22,6 @@ import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Insets
-import java.time.format.DateTimeFormatter
 import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
@@ -44,7 +42,6 @@ class JiraToolWindowFactory : ToolWindowFactory {
 
         private val diffAnalysisService = project.service<DiffAnalysisService>()
         private val jiraApiService = project.service<JiraApiService>()
-        private val historyService = project.service<TicketHistoryService>()
         private var historyPanel: JBPanel<*>? = null
 
         fun getContent(): JBPanel<*> {
@@ -90,10 +87,19 @@ class JiraToolWindowFactory : ToolWindowFactory {
             panel.border = BorderFactory.createEmptyBorder(10, 15, 10, 15)
             historyPanel = panel
 
-            // Title
-            val historyTitle = JBLabel("Recent Tickets")
+            // Title and Refresh button
+            val titlePanel = JBPanel<JBPanel<*>>(BorderLayout())
+            val historyTitle = JBLabel("Recent Tickets (from Jira)")
             historyTitle.font = historyTitle.font.deriveFont(Font.BOLD, 14f)
-            panel.add(historyTitle)
+            titlePanel.add(historyTitle, BorderLayout.WEST)
+
+            val refreshButton = JButton("Refresh")
+            refreshButton.addActionListener {
+                refreshHistoryPanel()
+            }
+            titlePanel.add(refreshButton, BorderLayout.EAST)
+
+            panel.add(titlePanel)
             panel.add(Box.createVerticalStrut(10))
 
             // Load and display tickets
@@ -106,36 +112,57 @@ class JiraToolWindowFactory : ToolWindowFactory {
 
         private fun refreshHistoryPanel() {
             historyPanel?.let { panel ->
-                // Remove all except title (first 2 components)
+                // Remove all except title panel (first 2 components)
                 while (panel.componentCount > 2) {
                     panel.remove(2)
                 }
 
-                val recentTickets = historyService.getRecentTickets(10)
-
-                if (recentTickets.isEmpty()) {
-                    val emptyLabel = JBLabel("No tickets created yet")
-                    emptyLabel.foreground = java.awt.Color.GRAY
-                    panel.add(emptyLabel)
-                } else {
-                    recentTickets.forEach { ticket ->
-                        panel.add(createTicketItem(ticket))
-                        panel.add(Box.createVerticalStrut(8))
-                    }
-                }
-
+                // Show loading message
+                val loadingLabel = JBLabel("Loading recent tickets...")
+                loadingLabel.foreground = java.awt.Color.GRAY
+                panel.add(loadingLabel)
                 panel.revalidate()
                 panel.repaint()
+
+                // Load tickets from Jira API in background thread
+                Thread {
+                    val result = jiraApiService.getRecentCreatedIssues(10)
+
+                    javax.swing.SwingUtilities.invokeLater {
+                        // Remove loading message
+                        panel.remove(loadingLabel)
+
+                        result.onSuccess { recentTickets ->
+                            if (recentTickets.isEmpty()) {
+                                val emptyLabel = JBLabel("No tickets found")
+                                emptyLabel.foreground = java.awt.Color.GRAY
+                                panel.add(emptyLabel)
+                            } else {
+                                recentTickets.forEach { ticket ->
+                                    panel.add(createTicketItem(ticket))
+                                    panel.add(Box.createVerticalStrut(8))
+                                }
+                            }
+                        }.onFailure { error ->
+                            val errorLabel = JBLabel("Failed to load tickets: ${error.message}")
+                            errorLabel.foreground = java.awt.Color.RED
+                            panel.add(errorLabel)
+                        }
+
+                        panel.revalidate()
+                        panel.repaint()
+                    }
+                }.start()
             }
         }
 
-        private fun createTicketItem(ticket: TicketHistory): JBPanel<*> {
+        private fun createTicketItem(ticket: RecentIssue): JBPanel<*> {
             val itemPanel = JBPanel<JBPanel<*>>(GridBagLayout())
             itemPanel.border = BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(java.awt.Color(60, 60, 60)),
                 BorderFactory.createEmptyBorder(8, 10, 8, 10)
             )
-            itemPanel.maximumSize = Dimension(Int.MAX_VALUE, 80)
+            itemPanel.maximumSize = Dimension(Int.MAX_VALUE, 100)
 
             val gbc = GridBagConstraints()
             gbc.fill = GridBagConstraints.HORIZONTAL
@@ -156,30 +183,58 @@ class JiraToolWindowFactory : ToolWindowFactory {
             })
             itemPanel.add(keyLabel, gbc)
 
-            // Project and type info
+            // Status badge
             gbc.gridx = 1
+            gbc.weightx = 0.0
+            gbc.insets = Insets(2, 10, 2, 10)
+            val statusLabel = JBLabel(ticket.status)
+            statusLabel.foreground = when (ticket.status.lowercase()) {
+                "done", "closed", "resolved" -> java.awt.Color(0, 150, 0)
+                "in progress", "in review" -> java.awt.Color(0, 100, 200)
+                else -> java.awt.Color.GRAY
+            }
+            statusLabel.font = statusLabel.font.deriveFont(Font.BOLD, 10f)
+            itemPanel.add(statusLabel, gbc)
+
+            // Project and type info
+            gbc.gridx = 2
             gbc.weightx = 1.0
-            gbc.insets = Insets(2, 10, 2, 0)
-            val infoLabel = JBLabel("${ticket.projectKey} | ${ticket.issueType}")
+            gbc.insets = Insets(2, 0, 2, 0)
+            val infoText = buildString {
+                append("${ticket.projectKey} | ${ticket.issueType}")
+                ticket.priority?.let { append(" | $it") }
+            }
+            val infoLabel = JBLabel(infoText)
             infoLabel.foreground = java.awt.Color.GRAY
             infoLabel.font = infoLabel.font.deriveFont(11f)
             itemPanel.add(infoLabel, gbc)
 
-            // Title
+            // Title (summary)
             gbc.gridx = 0
             gbc.gridy = 1
-            gbc.gridwidth = 2
+            gbc.gridwidth = 3
             gbc.insets = Insets(2, 0, 2, 0)
-            val titleLabel = JBLabel(ticket.title)
+            val titleLabel = JBLabel(ticket.summary)
             itemPanel.add(titleLabel, gbc)
 
             // Created time
             gbc.gridy = 2
-            val timeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-            val timeLabel = JBLabel(ticket.createdAt.format(timeFormatter))
-            timeLabel.foreground = java.awt.Color.GRAY
-            timeLabel.font = timeLabel.font.deriveFont(10f)
-            itemPanel.add(timeLabel, gbc)
+            try {
+                // Parse ISO 8601 date format from Jira
+                val instant = java.time.Instant.parse(ticket.created)
+                val zonedDateTime = instant.atZone(java.time.ZoneId.systemDefault())
+                val timeFormatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+                val timeLabel = JBLabel("Created: ${zonedDateTime.format(timeFormatter)}")
+                timeLabel.foreground = java.awt.Color.GRAY
+                timeLabel.font = timeLabel.font.deriveFont(10f)
+                itemPanel.add(timeLabel, gbc)
+            } catch (e: Exception) {
+                // If parsing fails, just show raw date
+                val timeLabel = JBLabel("Created: ${ticket.created}")
+                timeLabel.foreground = java.awt.Color.GRAY
+                timeLabel.font = timeLabel.font.deriveFont(10f)
+                itemPanel.add(timeLabel, gbc)
+            }
 
             return itemPanel
         }
@@ -199,7 +254,7 @@ class JiraToolWindowFactory : ToolWindowFactory {
             val dialog = CreateJiraTicketDialog(project, diffResult)
             val dialogResult = dialog.showAndGet()
 
-            // Refresh history if dialog was successful
+            // Refresh history if dialog was successful (to show newly created ticket from API)
             if (dialogResult) {
                 refreshHistoryPanel()
             }
