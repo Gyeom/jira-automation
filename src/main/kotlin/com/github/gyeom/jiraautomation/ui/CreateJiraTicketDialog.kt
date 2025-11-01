@@ -667,25 +667,38 @@ class CreateJiraTicketDialog(
                     regularIssueTypes = regularTypes.map { IssueTypeItem(it.id, it.name) }
                     subtaskIssueTypes = subtaskTypes.map { IssueTypeItem(it.id, it.name) }
 
-                    // Add regular types to combo box (subtasks added when parent is validated)
-                    regularIssueTypes.forEach { issueType ->
-                        issueTypeComboBox.addItem(issueType)
+                    // Check if we're in subtask mode (parent is validated)
+                    if (validatedParent != null) {
+                        // Maintain subtask mode - add only subtask types
+                        println("Parent is validated, loading subtask types only")
+                        subtaskIssueTypes.forEach { subtaskType ->
+                            issueTypeComboBox.addItem(subtaskType)
+                        }
+                        if (subtaskIssueTypes.isNotEmpty()) {
+                            issueTypeComboBox.selectedIndex = 0
+                        }
+                        issueTypeComboBox.isEnabled = false
+                    } else {
+                        // Normal mode - add regular types
+                        regularIssueTypes.forEach { issueType ->
+                            issueTypeComboBox.addItem(issueType)
+                        }
+
+                        // Select last used issue type if exists, otherwise use default
+                        val lastType = settings.state.lastUsedIssueType.takeIf { it.isNotEmpty() }
+                            ?: settings.state.defaultIssueType
+                        for (i in 0 until issueTypeComboBox.itemCount) {
+                            val item = issueTypeComboBox.getItemAt(i)
+                            if (item.name == lastType) {
+                                issueTypeComboBox.selectedIndex = i
+                                break
+                            }
+                        }
                     }
 
                     println("Loaded ${regularTypes.size} regular issue types and ${subtaskTypes.size} subtask types")
                     if (subtaskTypes.isNotEmpty()) {
                         println("Subtask types available: ${subtaskTypes.map { it.name }.joinToString(", ")}")
-                    }
-
-                    // Select last used issue type if exists, otherwise use default
-                    val lastType = settings.state.lastUsedIssueType.takeIf { it.isNotEmpty() }
-                        ?: settings.state.defaultIssueType
-                    for (i in 0 until issueTypeComboBox.itemCount) {
-                        val item = issueTypeComboBox.getItemAt(i)
-                        if (item.name == lastType) {
-                            issueTypeComboBox.selectedIndex = i
-                            break
-                        }
                     }
                 }
             }.onFailure { error ->
@@ -1052,6 +1065,11 @@ class CreateJiraTicketDialog(
         val issueType = (issueTypeComboBox.selectedItem as? IssueTypeItem)?.name
             ?: issueTypeComboBox.editor?.item?.toString()?.trim()
             ?: "Task"
+
+        println("DEBUG: Issue Type from combo: $issueType")
+        println("DEBUG: Issue Type combo box item count: ${issueTypeComboBox.itemCount}")
+        println("DEBUG: Validated parent: ${validatedParent?.key}")
+        println("DEBUG: Parent field text: ${parentIssueField.text.trim()}")
 
         // Use priority ID instead of name for Jira API
         val selectedPriority = priorityComboBox.selectedItem as? PriorityItem
