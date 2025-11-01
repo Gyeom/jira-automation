@@ -24,6 +24,40 @@ class AIService(private val project: Project) {
     private val gson = Gson()
     private val settings = JiraSettingsState.getInstance(project)
 
+    companion object {
+        const val DEFAULT_PROMPT_TEMPLATE = """Given the following code changes, generate a Jira ticket in {{LANGUAGE}}.
+
+{{DIFF_SUMMARY}}
+
+Detailed Changes:
+{{DIFF_CONTENT}}
+
+Please generate:
+1. A concise Jira ticket title (max 100 characters, in {{LANGUAGE}})
+   - Should clearly describe what was changed
+   - Format: [Category] Brief description
+   - Example (Korean): [기능] 사용자 인증 로직 구현
+   - Example (English): [Feature] Implement user authentication
+
+2. A detailed description (in {{LANGUAGE}}) with the following sections:
+   - **What was changed**: Specific changes made to the code
+   - **Why it was changed**: Reasoning and motivation behind the changes
+   - **Impact**: Potential effects on the system, dependencies, or users
+   - **Technical details**: Any important implementation notes
+
+Format your response EXACTLY as JSON:
+{
+  "title": "your title here",
+  "description": "## What was changed\n...\n\n## Why it was changed\n...\n\n## Impact\n...\n\n## Technical details\n..."
+}
+
+Important:
+- Use {{LANGUAGE}} for all text
+- Keep the title under 100 characters
+- Use markdown formatting in the description
+- Be specific and concise"""
+    }
+
     fun generateTicketFromDiff(
         diffSummary: String,
         diffContent: String,
@@ -150,39 +184,32 @@ class AIService(private val project: Project) {
             diffContent
         }
 
-        return """
-Given the following code changes, generate a Jira ticket in ${language.displayName}.
+        // Use custom template if enabled, otherwise use default
+        val template = if (settings.state.useCustomPrompt && settings.state.customPromptTemplate.isNotEmpty()) {
+            settings.state.customPromptTemplate
+        } else {
+            DEFAULT_PROMPT_TEMPLATE
+        }
 
-$diffSummary
+        // Replace template variables
+        return template
+            .replace("{{LANGUAGE}}", language.displayName)
+            .replace("{{DIFF_SUMMARY}}", diffSummary)
+            .replace("{{DIFF_CONTENT}}", truncatedDiff)
+    }
 
-Detailed Changes:
-$truncatedDiff
+    /**
+     * Validate prompt template
+     */
+    fun validatePromptTemplate(template: String): Result<String> {
+        val requiredVariables = listOf("LANGUAGE", "DIFF_SUMMARY", "DIFF_CONTENT")
+        val missingVariables = requiredVariables.filter { !template.contains("{{$it}}") }
 
-Please generate:
-1. A concise Jira ticket title (max 100 characters, in ${language.displayName})
-   - Should clearly describe what was changed
-   - Format: [Category] Brief description
-   - Example (Korean): [기능] 사용자 인증 로직 구현
-   - Example (English): [Feature] Implement user authentication
-
-2. A detailed description (in ${language.displayName}) with the following sections:
-   - **What was changed**: Specific changes made to the code
-   - **Why it was changed**: Reasoning and motivation behind the changes
-   - **Impact**: Potential effects on the system, dependencies, or users
-   - **Technical details**: Any important implementation notes
-
-Format your response EXACTLY as JSON:
-{
-  "title": "your title here",
-  "description": "## What was changed\n...\n\n## Why it was changed\n...\n\n## Impact\n...\n\n## Technical details\n..."
-}
-
-Important:
-- Use ${language.displayName} for all text
-- Keep the title under 100 characters
-- Use markdown formatting in the description
-- Be specific and concise
-""".trimIndent()
+        return if (missingVariables.isNotEmpty()) {
+            Result.failure(Exception("Missing required variables: ${missingVariables.joinToString { "{{$it}}" }}"))
+        } else {
+            Result.success("Template is valid")
+        }
     }
 
     private fun parseGeneratedTicket(content: String): Result<GeneratedTicket> {

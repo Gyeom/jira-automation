@@ -26,6 +26,10 @@ class JiraSettingsState : PersistentStateComponent<JiraSettingsState.State> {
         var includeDiffInDescription: Boolean = true,
         var linkToCommit: Boolean = true,
 
+        // Prompt customization
+        var useCustomPrompt: Boolean = false,
+        var customPromptTemplate: String = "",
+
         // Last used values for ticket creation dialog
         var lastUsedProjectKey: String = "",
         var lastUsedIssueType: String = "",

@@ -39,6 +39,10 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
     private var includeDiffInDescription = true
     private var linkToCommit = true
 
+    // Prompt customization
+    private var useCustomPrompt = false
+    private val promptTemplateArea = com.intellij.ui.components.JBTextArea(25, 80)
+
     init {
         // Setup listeners
         aiProviderComboBox.addActionListener { updateAIModels() }
@@ -166,6 +170,56 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
                         .bindSelected(::linkToCommit)
                 }
             }
+
+            group("Prompt Template") {
+                row {
+                    checkBox("Use custom prompt template")
+                        .bindSelected(::useCustomPrompt)
+                        .comment("Enable to customize the AI prompt for ticket generation")
+                }
+
+                row {
+                    scrollCell(promptTemplateArea)
+                        .comment("Customize the AI prompt template. Use variables: {{LANGUAGE}}, {{DIFF_SUMMARY}}, {{DIFF_CONTENT}}")
+                }.resizableRow()
+
+                row {
+                    button("Reset to Default") {
+                        promptTemplateArea.text = AIService.DEFAULT_PROMPT_TEMPLATE
+                    }
+                    button("Validate Template") {
+                        validatePromptTemplate()
+                    }
+                }
+
+                row {
+                    comment("""
+                        Available Variables:
+                        • {{LANGUAGE}} - Output language (e.g., Korean, English)
+                        • {{DIFF_SUMMARY}} - Summary of code changes
+                        • {{DIFF_CONTENT}} - Detailed diff content (auto-truncated at 3000 chars)
+                    """.trimIndent())
+                }
+            }
+        }
+    }
+
+    private fun validatePromptTemplate() {
+        val template = promptTemplateArea.text
+        val result = aiService.validatePromptTemplate(template)
+
+        result.onSuccess { message ->
+            com.intellij.openapi.ui.Messages.showInfoMessage(
+                project,
+                "✓ $message\n\nAll required variables are included.",
+                "Template Validation"
+            )
+        }.onFailure { error ->
+            com.intellij.openapi.ui.Messages.showErrorDialog(
+                project,
+                "Template validation failed:\n${error.message}\n\nPlease ensure all required variables are included.",
+                "Validation Error"
+            )
         }
     }
 
@@ -236,7 +290,9 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
                 rememberLastLanguage != state.rememberLastLanguage ||
                 autoDetectLanguage != state.autoDetectLanguage ||
                 includeDiffInDescription != state.includeDiffInDescription ||
-                linkToCommit != state.linkToCommit
+                linkToCommit != state.linkToCommit ||
+                useCustomPrompt != state.useCustomPrompt ||
+                promptTemplateArea.text != state.customPromptTemplate
     }
 
     override fun apply() {
@@ -258,6 +314,9 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
         state.autoDetectLanguage = autoDetectLanguage
         state.includeDiffInDescription = includeDiffInDescription
         state.linkToCommit = linkToCommit
+
+        state.useCustomPrompt = useCustomPrompt
+        state.customPromptTemplate = promptTemplateArea.text
     }
 
     override fun reset() {
@@ -280,5 +339,14 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
         autoDetectLanguage = state.autoDetectLanguage
         includeDiffInDescription = state.includeDiffInDescription
         linkToCommit = state.linkToCommit
+
+        useCustomPrompt = state.useCustomPrompt
+        promptTemplateArea.text = if (state.customPromptTemplate.isNotEmpty()) {
+            state.customPromptTemplate
+        } else {
+            AIService.DEFAULT_PROMPT_TEMPLATE
+        }
+        promptTemplateArea.lineWrap = true
+        promptTemplateArea.wrapStyleWord = true
     }
 }
