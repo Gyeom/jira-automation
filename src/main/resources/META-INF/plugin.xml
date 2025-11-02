@@ -22,6 +22,7 @@
         <projectService serviceImplementation="com.github.gyeom.jiraautomation.services.JiraApiService"/>
         <projectService serviceImplementation="com.github.gyeom.jiraautomation.services.DiffAnalysisService"/>
         <projectService serviceImplementation="com.github.gyeom.jiraautomation.services.AIService"/>
+        <notificationGroup id="Jira Notifications" displayType="BALLOON"/>
     </extensions>
 
     <actions>

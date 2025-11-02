@@ -1312,7 +1312,8 @@ class JiraApiService(private val project: Project) {
 
         try {
             // JQL query to get issues assigned to current user, ordered by update date
-            val jql = "assignee = currentUser() AND status != Done AND status != Closed ORDER BY updated DESC"
+            // Include all statuses, but limit Done/Closed tickets to last 30 days
+            val jql = "assignee = currentUser() AND (statusCategory != Done OR updated >= -30d) ORDER BY updated DESC"
             val url = "${state.jiraUrl}/rest/api/3/search/jql?jql=${java.net.URLEncoder.encode(jql, "UTF-8")}&maxResults=$maxResults&fields=key,summary,status,created,issuetype,project,priority"
 
             val request = Request.Builder()
@@ -1340,6 +1341,8 @@ class JiraApiService(private val project: Project) {
 
                         val status = fields["status"] as? Map<String, Any>
                         val statusName = status?.get("name") as? String ?: "Unknown"
+                        val statusCategory = status?.get("statusCategory") as? Map<String, Any>
+                        val statusCategoryKey = statusCategory?.get("key") as? String
 
                         val issueType = fields["issuetype"] as? Map<String, Any>
                         val issueTypeName = issueType?.get("name") as? String ?: "Task"
@@ -1360,7 +1363,8 @@ class JiraApiService(private val project: Project) {
                             projectKey = projectKey,
                             projectName = projectName,
                             url = "${state.jiraUrl}/browse/$key",
-                            priority = priorityName
+                            priority = priorityName,
+                            statusCategory = statusCategoryKey
                         )
                     } catch (e: Exception) {
                         println("Error parsing issue: ${e.message}")
@@ -1429,6 +1433,8 @@ class JiraApiService(private val project: Project) {
 
                         val status = fields["status"] as? Map<String, Any>
                         val statusName = status?.get("name") as? String ?: "Unknown"
+                        val statusCategory = status?.get("statusCategory") as? Map<String, Any>
+                        val statusCategoryKey = statusCategory?.get("key") as? String
 
                         val issueType = fields["issuetype"] as? Map<String, Any>
                         val issueTypeName = issueType?.get("name") as? String ?: "Task"
@@ -1449,7 +1455,8 @@ class JiraApiService(private val project: Project) {
                             projectKey = projectKey,
                             projectName = projectName,
                             url = "${state.jiraUrl}/browse/$key",
-                            priority = priorityName
+                            priority = priorityName,
+                            statusCategory = statusCategoryKey
                         )
                     } catch (e: Exception) {
                         println("Error parsing issue: ${e.message}")
@@ -1550,6 +1557,170 @@ class JiraApiService(private val project: Project) {
             println("Error searching issues: ${e.message}")
             e.printStackTrace()
             return Result.failure(e)
+        }
+    }
+
+    /**
+     * Get available transitions for an issue
+     * @param issueKey The issue key (e.g., "PROJECT-123")
+     * @return Result containing list of available transitions
+     */
+    fun getIssueTransitions(issueKey: String): Result<List<IssueTransition>> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        return try {
+            // Add expand parameter to get field information
+            val url = "${state.jiraUrl.trimEnd('/')}/rest/api/3/issue/$issueKey/transitions?expand=transitions.fields"
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .get()
+                .build()
+
+            println("Getting transitions for issue: $issueKey (with field metadata)")
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string() ?: ""
+
+            if (response.isSuccessful) {
+                println("=== Transitions API Response ===")
+                println(responseBody)
+                println("================================")
+
+                val jsonResponse = gson.fromJson(responseBody, Map::class.java) as Map<*, *>
+                val transitions = (jsonResponse["transitions"] as? List<Map<String, Any>>) ?: emptyList()
+
+                val issueTransitions = transitions.map { transition ->
+                    val transitionId = transition["id"]?.toString() ?: ""
+                    val transitionName = transition["name"]?.toString() ?: ""
+
+                    println("\n--- Processing transition: $transitionName ($transitionId) ---")
+
+                    val to = transition["to"] as? Map<String, Any>
+                    val hasScreen = transition["hasScreen"] as? Boolean ?: false
+                    val fields = transition["fields"] as? Map<String, Map<String, Any>>
+
+                    println("Has screen: $hasScreen")
+                    println("Fields data: $fields")
+
+                    val transitionFields = fields?.mapValues { (fieldId, fieldData) ->
+                        val required = fieldData["required"] as? Boolean ?: false
+                        val name = fieldData["name"]?.toString() ?: fieldId
+                        val schema = fieldData["schema"] as? Map<String, Any>
+
+                        println("  Field: $fieldId, Name: $name, Required: $required")
+
+                        TransitionField(
+                            required = required,
+                            name = name,
+                            fieldId = fieldId,
+                            schema = schema?.let {
+                                TransitionFieldSchema(
+                                    type = it["type"]?.toString() ?: "string",
+                                    system = it["system"]?.toString()
+                                )
+                            },
+                            allowedValues = fieldData["allowedValues"] as? List<Any>
+                        )
+                    }
+
+                    IssueTransition(
+                        id = transitionId,
+                        name = transitionName,
+                        to = to?.let {
+                            TransitionStatus(
+                                id = it["id"]?.toString() ?: "",
+                                name = it["name"]?.toString() ?: ""
+                            )
+                        },
+                        hasScreen = hasScreen,
+                        fields = transitionFields
+                    )
+                }
+
+                println("\n=== Found ${issueTransitions.size} available transitions ===")
+                issueTransitions.forEach { t ->
+                    val requiredFields = t.fields?.filter { it.value.required }?.keys?.joinToString(", ") ?: "none"
+                    println("  ${t.name} (${t.id}) -> ${t.to?.name}, hasScreen: ${t.hasScreen}, required fields: $requiredFields")
+                }
+                Result.success(issueTransitions)
+            } else {
+                println("Failed to get transitions: ${response.code} - $responseBody")
+                Result.failure(Exception("Failed to get transitions: ${response.code}"))
+            }
+        } catch (e: Exception) {
+            println("Error getting transitions: ${e.message}")
+            e.printStackTrace()
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Execute a transition on an issue to change its status
+     * @param issueKey The issue key (e.g., "PROJECT-123")
+     * @param transitionId The transition ID to execute
+     * @param fields Optional fields to set during transition (for required fields)
+     * @return Result indicating success or failure
+     */
+    fun transitionIssue(
+        issueKey: String,
+        transitionId: String,
+        fields: Map<String, Any>? = null
+    ): Result<Unit> {
+        val state = settings.state
+
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            return Result.failure(Exception("Jira credentials not configured"))
+        }
+
+        return try {
+            val url = "${state.jiraUrl.trimEnd('/')}/rest/api/3/issue/$issueKey/transitions"
+            val credentials = Credentials.basic(state.jiraUsername, state.jiraApiToken)
+
+            val requestData = mutableMapOf<String, Any>(
+                "transition" to mapOf("id" to transitionId)
+            )
+
+            // Add fields if provided
+            if (!fields.isNullOrEmpty()) {
+                requestData["fields"] = fields
+                println("Transitioning with fields: $fields")
+            }
+
+            val requestBody = gson.toJson(requestData)
+            println("Transition request body: $requestBody")
+
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", credentials)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .post(requestBody.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            println("Transitioning issue $issueKey with transition ID: $transitionId")
+
+            val response = client.newCall(request).execute()
+
+            if (response.isSuccessful) {
+                println("Successfully transitioned issue: $issueKey")
+                Result.success(Unit)
+            } else {
+                val responseBody = response.body?.string() ?: ""
+                println("Failed to transition issue: ${response.code} - $responseBody")
+                Result.failure(Exception("Failed to transition issue: ${response.code}\n$responseBody"))
+            }
+        } catch (e: Exception) {
+            println("Error transitioning issue: ${e.message}")
+            e.printStackTrace()
+            Result.failure(e)
         }
     }
 

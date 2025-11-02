@@ -151,8 +151,20 @@ data class RecentIssue(
     val projectKey: String,
     val projectName: String,
     val url: String,
-    val priority: String? = null
+    val priority: String? = null,
+    val statusCategory: String? = null  // new, indeterminate, done
 )
+
+// Status category enum for filtering
+enum class StatusCategory(val key: String, val displayName: String, val colorHex: String) {
+    TODO("new", "To Do", "#42526E"),           // blue-gray
+    IN_PROGRESS("indeterminate", "In Progress", "#FFAB00"),  // yellow
+    DONE("done", "Done", "#00875A");            // green
+
+    companion object {
+        fun fromKey(key: String?) = values().find { it.key == key }
+    }
+}
 
 // Parent issue reference for creating subtasks
 data class ParentIssueRef(
@@ -168,4 +180,31 @@ data class ParentIssue(
     val issueType: String,
     val status: String,
     val epicKey: String? = null  // Epic Link from parent
+)
+
+// Issue transition models for status changes
+data class IssueTransition(
+    val id: String,
+    val name: String,
+    val to: TransitionStatus? = null,
+    val hasScreen: Boolean = false,
+    val fields: Map<String, TransitionField>? = null
+)
+
+data class TransitionStatus(
+    val id: String,
+    val name: String
+)
+
+data class TransitionField(
+    val required: Boolean,
+    val name: String,
+    val fieldId: String,
+    val schema: TransitionFieldSchema? = null,
+    val allowedValues: List<Any>? = null
+)
+
+data class TransitionFieldSchema(
+    val type: String,
+    val system: String? = null
 )
