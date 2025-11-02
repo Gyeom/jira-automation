@@ -389,54 +389,33 @@ class JiraToolWindowFactory : ToolWindowFactory {
         }
 
         private fun createTicketFromText() {
-            // Show text input dialog
+            // 1단계: 텍스트 입력 Dialog
             val inputDialog = QuickTextInputDialog(project)
             if (!inputDialog.showAndGet()) {
-                return
+                return  // 취소
             }
 
             val inputText = inputDialog.getInputText()
-            if (inputText.isBlank()) {
-                Messages.showWarningDialog(
-                    project,
-                    "Please enter some text to generate a ticket.",
-                    "No Input"
-                )
-                return
-            }
 
-            val language = inputDialog.getLanguage()
+            // 2단계: 텍스트를 diffContent에 넣은 더미 DiffResult 생성
+            val textBasedDiffResult = DiffAnalysisService.DiffAnalysisResult(
+                filesChanged = 0,  // ← 0이면 Text 모드로 감지
+                linesAdded = 0,
+                linesDeleted = 0,
+                fileList = emptyList(),
+                diffContent = inputText,  // ← 여기에 텍스트!
+                branchName = null,
+                commits = emptyList()
+            )
 
-            // Generate ticket with AI
-            val result = aiService.generateTicketFromText(inputText, language)
+            // 3단계: 기존 CreateJiraTicketDialog 그대로 사용!
+            val dialog = CreateJiraTicketDialog(project, textBasedDiffResult)
+            val success = dialog.showAndGet()
 
-            result.onSuccess { ticket ->
-                // Create a dummy diff result for the dialog
-                val emptyDiffResult = DiffAnalysisService.DiffAnalysisResult(
-                    filesChanged = 0,
-                    linesAdded = 0,
-                    linesDeleted = 0,
-                    fileList = emptyList(),
-                    diffContent = inputText,
-                    branchName = null,
-                    commits = emptyList()
-                )
-
-                // Open create dialog with pre-filled content
-                val dialog = CreateJiraTicketDialog(project, emptyDiffResult)
-                val dialogResult = dialog.showAndGet()
-
-                // Refresh panels if successful
-                if (dialogResult) {
-                    refreshCreatedTicketsPanel()
-                    refreshAssignedTicketsPanel()
-                }
-            }.onFailure { error ->
-                Messages.showErrorDialog(
-                    project,
-                    "Failed to generate ticket from text:\n${error.message}",
-                    "AI Generation Error"
-                )
+            // 4단계: 성공 시 패널 갱신
+            if (success) {
+                refreshCreatedTicketsPanel()
+                refreshAssignedTicketsPanel()
             }
         }
     }

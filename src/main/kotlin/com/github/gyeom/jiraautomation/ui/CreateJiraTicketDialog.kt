@@ -829,21 +829,35 @@ class CreateJiraTicketDialog(
                 // Use AI provider and model from settings
                 println("Generating ticket with AI: ${settings.state.aiProvider} / ${settings.state.aiModel}")
 
-                val diffSummary = diffAnalysisService.formatDiffSummary(diffResult)
-                val result = aiService.generateTicketFromDiff(
-                    diffSummary,
-                    diffResult.diffContent,
-                    language
-                )
+                // Text 모드 감지: filesChanged가 0이면 텍스트 기반
+                val isTextMode = diffResult.filesChanged == 0
+
+                val result = if (isTextMode) {
+                    // Text 모드: diffContent를 텍스트로 사용
+                    println("Text mode: generating from user input text")
+                    aiService.generateTicketFromText(
+                        diffResult.diffContent,
+                        language
+                    )
+                } else {
+                    // Code 모드: 기존 방식 (Diff 기반)
+                    println("Code mode: generating from diff")
+                    val diffSummary = diffAnalysisService.formatDiffSummary(diffResult)
+                    aiService.generateTicketFromDiff(
+                        diffSummary,
+                        diffResult.diffContent,
+                        language
+                    )
+                }
 
                 SwingUtilities.invokeLater {
                     result.onSuccess { ticket ->
                         titleField.text = ticket.title
                         descriptionArea.text = ticket.description
                     }.onFailure { error ->
-                        titleField.text = "[AI Error] Code Changes"
+                        titleField.text = if (isTextMode) "[AI Error] Text Input" else "[AI Error] Code Changes"
                         descriptionArea.text = "Failed to generate with AI: ${error.message}\n\n" +
-                                "Please edit manually.\n\n$diffSummary"
+                                "Please edit manually."
                         Messages.showErrorDialog(
                             project,
                             "Failed to generate ticket: ${error.message}",

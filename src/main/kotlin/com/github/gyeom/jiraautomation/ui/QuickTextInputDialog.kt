@@ -62,6 +62,18 @@ class QuickTextInputDialog(
     fun getLanguage(): OutputLanguage = languageComboBox.selectedItem as OutputLanguage
 
     override fun getOKAction() = super.getOKAction().apply {
-        putValue(Action.NAME, "Generate Ticket with AI")
+        putValue(Action.NAME, "Continue")
+    }
+
+    override fun doOKAction() {
+        if (inputTextArea.text.trim().isEmpty()) {
+            com.intellij.openapi.ui.Messages.showWarningDialog(
+                project,
+                "Please enter some text to create a ticket.",
+                "No Input"
+            )
+            return
+        }
+        super.doOKAction()
     }
 }
