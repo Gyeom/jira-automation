@@ -4,6 +4,8 @@ import com.github.gyeom.jiraautomation.model.RecentIssue
 import com.github.gyeom.jiraautomation.services.AIService
 import com.github.gyeom.jiraautomation.services.DiffAnalysisService
 import com.github.gyeom.jiraautomation.services.JiraApiService
+import com.github.gyeom.jiraautomation.settings.JiraSettingsListener
+import com.github.gyeom.jiraautomation.settings.JiraSettingsState
 import com.github.gyeom.jiraautomation.ui.CreateJiraTicketDialog
 import com.github.gyeom.jiraautomation.ui.QuickTextInputDialog
 import com.intellij.ide.BrowserUtil
@@ -47,8 +49,14 @@ class JiraToolWindowFactory : ToolWindowFactory {
         private val diffAnalysisService = project.service<DiffAnalysisService>()
         private val jiraApiService = project.service<JiraApiService>()
         private val aiService = project.service<AIService>()
+        private val settings = JiraSettingsState.getInstance(project)
         private var assignedTicketsMainPanel: JBPanel<*>? = null
         private var createdTicketsMainPanel: JBPanel<*>? = null
+
+        // UI components that need to be updated based on settings
+        private lateinit var createFromCodeButton: JButton
+        private lateinit var createFromTextButton: JButton
+        private lateinit var settingsStatusLabel: JBLabel
 
         fun getContent(): JBPanel<*> {
             val mainPanel = JBPanel<JBPanel<*>>(BorderLayout())
@@ -61,18 +69,38 @@ class JiraToolWindowFactory : ToolWindowFactory {
             titleLabel.font = titleLabel.font.deriveFont(Font.BOLD, 16f)
             topPanel.add(titleLabel, BorderLayout.NORTH)
 
+            // Settings status indicator
+            settingsStatusLabel = JBLabel()
+            settingsStatusLabel.font = settingsStatusLabel.font.deriveFont(11f)
+
             // Create buttons
-            val createFromCodeButton = JButton("Create from Code Changes")
+            createFromCodeButton = JButton("Create from Code Changes")
             createFromCodeButton.addActionListener { createTicketFromChanges() }
 
-            val createFromTextButton = JButton("Create Jira Ticket")
+            createFromTextButton = JButton("Create Jira Ticket")
             createFromTextButton.addActionListener { createTicketFromText() }
 
-            val buttonPanel = JBPanel<JBPanel<*>>(FlowLayout(FlowLayout.LEFT, 5, 10))
+            val settingsButton = JButton("Open Settings")
+            settingsButton.addActionListener {
+                com.intellij.openapi.options.ShowSettingsUtil.getInstance()
+                    .showSettingsDialog(project, "Jira Ticket Creator")
+            }
+
+            // Status and buttons panel
+            val statusPanel = JBPanel<JBPanel<*>>(FlowLayout(FlowLayout.LEFT, 10, 5))
+            statusPanel.add(settingsStatusLabel)
+
+            val buttonPanel = JBPanel<JBPanel<*>>(FlowLayout(FlowLayout.LEFT, 5, 5))
             buttonPanel.add(createFromCodeButton)
             buttonPanel.add(createFromTextButton)
-            topPanel.add(buttonPanel, BorderLayout.CENTER)
+            buttonPanel.add(settingsButton)
 
+            val topContentPanel = JBPanel<JBPanel<*>>()
+            topContentPanel.layout = BoxLayout(topContentPanel, BoxLayout.Y_AXIS)
+            topContentPanel.add(statusPanel)
+            topContentPanel.add(buttonPanel)
+
+            topPanel.add(topContentPanel, BorderLayout.CENTER)
             mainPanel.add(topPanel, BorderLayout.NORTH)
 
             // Tabbed pane for different ticket views
@@ -88,17 +116,63 @@ class JiraToolWindowFactory : ToolWindowFactory {
 
             mainPanel.add(tabbedPane, BorderLayout.CENTER)
 
-            // Bottom section with settings button
-            val bottomPanel = JBPanel<JBPanel<*>>(FlowLayout(FlowLayout.CENTER, 10, 10))
-            val settingsButton = JButton("Open Settings")
-            settingsButton.addActionListener {
-                com.intellij.openapi.options.ShowSettingsUtil.getInstance()
-                    .showSettingsDialog(project, "Jira Ticket Creator")
-            }
-            bottomPanel.add(settingsButton)
-            mainPanel.add(bottomPanel, BorderLayout.SOUTH)
+            // Subscribe to settings changes
+            subscribeToSettingsChanges()
+
+            // Initial state update
+            updateUIBasedOnSettings()
 
             return mainPanel
+        }
+
+        private fun subscribeToSettingsChanges() {
+            project.messageBus.connect().subscribe(
+                JiraSettingsListener.TOPIC,
+                object : JiraSettingsListener {
+                    override fun onSettingsChanged(isValid: Boolean) {
+                        javax.swing.SwingUtilities.invokeLater {
+                            updateUIBasedOnSettings(isValid)
+                            if (isValid) {
+                                // Auto-refresh ticket lists when settings are valid
+                                refreshAssignedTicketsPanel()
+                                refreshCreatedTicketsPanel()
+                            }
+                        }
+                    }
+                }
+            )
+        }
+
+        private fun updateUIBasedOnSettings(forceValid: Boolean? = null) {
+            val state = settings.state
+            val hasRequiredSettings = state.jiraUrl.isNotEmpty() &&
+                    state.jiraUsername.isNotEmpty() &&
+                    state.jiraApiToken.isNotEmpty()
+
+            val isValid = forceValid ?: hasRequiredSettings
+
+            if (!hasRequiredSettings) {
+                settingsStatusLabel.text = "⚙️ Please configure Jira settings → Open Settings"
+                settingsStatusLabel.foreground = java.awt.Color(255, 152, 0)  // Orange
+                createFromCodeButton.isEnabled = false
+                createFromTextButton.isEnabled = false
+                createFromCodeButton.toolTipText = "Configure Jira settings first"
+                createFromTextButton.toolTipText = "Configure Jira settings first"
+            } else if (isValid) {
+                settingsStatusLabel.text = "✓ Connected to Jira"
+                settingsStatusLabel.foreground = java.awt.Color(76, 175, 80)  // Green
+                createFromCodeButton.isEnabled = true
+                createFromTextButton.isEnabled = true
+                createFromCodeButton.toolTipText = "Create ticket from uncommitted code changes"
+                createFromTextButton.toolTipText = "Create ticket from text description"
+            } else {
+                settingsStatusLabel.text = "⚠️ Jira connection failed - check settings"
+                settingsStatusLabel.foreground = java.awt.Color(244, 67, 54)  // Red
+                createFromCodeButton.isEnabled = false
+                createFromTextButton.isEnabled = false
+                createFromCodeButton.toolTipText = "Jira connection failed"
+                createFromTextButton.toolTipText = "Jira connection failed"
+            }
         }
 
         private fun createAssignedTicketsPanel(): JBPanel<*> {

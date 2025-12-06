@@ -379,8 +379,8 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
 
     override fun apply() {
         val state = settings.state
-        state.jiraUrl = jiraUrlField.text
-        state.jiraUsername = jiraUsernameField.text
+        state.jiraUrl = jiraUrlField.text.trim()
+        state.jiraUsername = jiraUsernameField.text.trim()
         state.jiraApiToken = String(jiraApiTokenField.password)
 
         state.aiProvider = aiProviderComboBox.selectedItem as? String ?: "anthropic"
@@ -393,6 +393,50 @@ class JiraSettingsConfigurable(private val project: Project) : Configurable {
         }
 
         state.customPromptTemplate = promptTemplateArea.text
+
+        // Validate settings and notify listeners
+        validateAndNotify()
+    }
+
+    private fun validateAndNotify() {
+        val state = settings.state
+
+        // Check if required Jira settings are filled
+        if (state.jiraUrl.isEmpty() || state.jiraUsername.isEmpty() || state.jiraApiToken.isEmpty()) {
+            // Settings incomplete - notify as invalid
+            project.messageBus.syncPublisher(JiraSettingsListener.TOPIC).onSettingsChanged(false)
+            return
+        }
+
+        // Validate connection in background
+        Thread {
+            val result = jiraApiService.testConnection()
+
+            SwingUtilities.invokeLater {
+                val isValid = result.isSuccess
+                project.messageBus.syncPublisher(JiraSettingsListener.TOPIC).onSettingsChanged(isValid)
+
+                if (isValid) {
+                    com.intellij.notification.NotificationGroupManager.getInstance()
+                        .getNotificationGroup("Jira Notifications")
+                        .createNotification(
+                            "Jira Settings",
+                            "Settings saved and connection verified successfully!",
+                            com.intellij.notification.NotificationType.INFORMATION
+                        )
+                        .notify(project)
+                } else {
+                    com.intellij.notification.NotificationGroupManager.getInstance()
+                        .getNotificationGroup("Jira Notifications")
+                        .createNotification(
+                            "Jira Settings",
+                            "Settings saved but connection failed: ${result.exceptionOrNull()?.message}",
+                            com.intellij.notification.NotificationType.WARNING
+                        )
+                        .notify(project)
+                }
+            }
+        }.start()
     }
 
     override fun reset() {
