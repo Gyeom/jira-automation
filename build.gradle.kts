@@ -35,7 +35,7 @@ dependencies {
     testImplementation(libs.opentest4j)
 
     // HTTP Client
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp:5.2.1")
 
     // JSON
     implementation("com.google.code.gson:gson:2.10.1")
